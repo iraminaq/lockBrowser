@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Study Gate Lock Prototype",
+  "version": "0.1.0",
+  "description": "Simple lock overlay prototype for web pages.",
+  "permissions": ["storage", "alarms", "tabs"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
