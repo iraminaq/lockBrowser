@@ -50,11 +50,6 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 async function handleMessage(message) {
   switch (message?.type) {
-    case "GET_LOCK_STATE": {
-      const state = await getLockState();
-      return { ok: true, state };
-    }
-
     case "UNLOCK_REQUEST": {
       const unlockUntil = Date.now() + DEFAULT_UNLOCK_DURATION_MS;
       const nextState = {

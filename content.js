@@ -1,4 +1,5 @@
 const OVERLAY_ID = "study-gate-lock-overlay";
+const LOCK_STATE_KEY = "lockState";
 
 let overlayElement = null;
 
@@ -13,19 +14,33 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 async function initialize() {
-  ensureOverlay();
-
   try {
-    const response = await chrome.runtime.sendMessage({ type: "GET_LOCK_STATE" });
-    if (response?.ok) {
-      applyLockState(response.state);
-    } else {
-      showOverlay();
-    }
+    const state = await getInitialLockState();
+    applyLockState(state);
   } catch (error) {
     console.error("Failed to initialize lock overlay:", error);
-    showOverlay();
   }
+}
+
+async function getInitialLockState() {
+  const stored = await chrome.storage.local.get(LOCK_STATE_KEY);
+  const state = stored[LOCK_STATE_KEY];
+
+  if (!state) {
+    return {
+      isLocked: true,
+      unlockUntil: null
+    };
+  }
+
+  if (!state.isLocked && state.unlockUntil && state.unlockUntil <= Date.now()) {
+    return {
+      isLocked: true,
+      unlockUntil: null
+    };
+  }
+
+  return state;
 }
 
 function ensureOverlay() {
@@ -64,15 +79,15 @@ function ensureOverlay() {
   overlay.append(panel);
 
   const root = document.documentElement || document.body;
-  root.append(overlay);
+  if (root) {
+    root.append(overlay);
+  }
 
   overlayElement = overlay;
   return overlayElement;
 }
 
 function applyLockState(state) {
-  ensureOverlay();
-
   if (state?.isLocked) {
     showOverlay();
     return;
@@ -82,15 +97,30 @@ function applyLockState(state) {
 }
 
 function showOverlay() {
-  ensureOverlay();
+  const overlay = ensureOverlay();
+  attachOverlayIfNeeded(overlay);
   overlayElement.hidden = false;
   overlayElement.setAttribute("data-locked", "true");
 }
 
 function hideOverlay() {
-  ensureOverlay();
+  if (!overlayElement) {
+    return;
+  }
+
   overlayElement.hidden = true;
   overlayElement.setAttribute("data-locked", "false");
+}
+
+function attachOverlayIfNeeded(overlay) {
+  if (overlay.isConnected) {
+    return;
+  }
+
+  const root = document.documentElement || document.body;
+  if (root) {
+    root.append(overlay);
+  }
 }
 
 async function handleUnlockClick() {
