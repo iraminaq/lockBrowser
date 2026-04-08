@@ -58,12 +58,14 @@
 
     let chosen = null;
 
+    // Priority order: overdue -> unseen -> upcoming -> future.
     if (due.length > 0) {
       chosen = pickCandidateWithListBias(due, recentListIds);
+    } else if (unseen.length > 0 && consecutiveUnseenCount < 2) {
+      // Unseen questions can appear at most twice in a row.
+      chosen = pickCandidateWithListBias(unseen, recentListIds);
     } else if (upcoming.length > 0) {
       chosen = pickCandidateWithListBias(upcoming, recentListIds);
-    } else if (unseen.length > 0 && consecutiveUnseenCount < 2) {
-      chosen = pickCandidateWithListBias(unseen, recentListIds);
     } else if (future.length > 0) {
       chosen = pickCandidateWithListBias(future, recentListIds);
     } else if (unseen.length > 0) {

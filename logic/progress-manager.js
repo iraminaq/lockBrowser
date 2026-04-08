@@ -40,7 +40,7 @@
     };
   }
 
-  function applyIncorrectProgress(progress, now) {
+  function applyIncorrectProgress(progress, now, incorrectReviewDelayMs) {
     const currentProgress = ensureProgress(progress);
     const currentRank = getRank(currentProgress);
     let nextLevel = currentProgress.level;
@@ -55,10 +55,11 @@
       nextLevel = 1;
     }
 
+    // After an incorrect answer, schedule the retry a little after the next lock timing.
     return {
       level: nextLevel,
       isUnseen: false,
-      reviewAt: now + 10 * MINUTE_MS
+      reviewAt: now + incorrectReviewDelayMs
     };
   }
 

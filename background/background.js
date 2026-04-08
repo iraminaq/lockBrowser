@@ -10,6 +10,7 @@ const RELOCK_ALARM_NAME = "relock-all-tabs";
 const LOG_PREFIX = "[lockBrowser]";
 const DEBUG_LOG_PREFIX = "[lockBrowser/debug]";
 const LOCK_INTERVAL_MS = 5 * 1000; // debug: temporary short relock interval for development
+const INCORRECT_RETRY_DELAY_MS = LOCK_INTERVAL_MS + 60 * 1000;
 
 chrome.runtime.onInstalled.addListener(async () => {
   await LockBrowserStorage.ensureDataStore();
@@ -214,12 +215,17 @@ async function submitAnswer(input) {
     });
   } else if (!currentSession.hasIncorrectProgressUpdated) {
     // Update incorrect progress only once per displayed question session.
-    nextProgress = LockBrowserProgress.applyIncorrectProgress(currentProgress, now);
+    nextProgress = LockBrowserProgress.applyIncorrectProgress(
+      currentProgress,
+      now,
+      getIncorrectReviewDelayMs()
+    );
     nextProgressByKey[progressKey] = nextProgress;
     currentSession.hasIncorrectProgressUpdated = true;
     console.log(DEBUG_LOG_PREFIX, "first incorrect progress update applied", {
       questionKey: progressKey,
-      nextProgress
+      nextProgress,
+      incorrectReviewDelayMs: getIncorrectReviewDelayMs()
     });
   } else {
     console.log(DEBUG_LOG_PREFIX, "incorrect progress update skipped for current session", {
@@ -282,6 +288,10 @@ function ensureSession(session, questionKey) {
 function appendRecentListId(recentListIds, listId) {
   const nextRecentListIds = Array.isArray(recentListIds) ? [...recentListIds, listId] : [listId];
   return nextRecentListIds.slice(-4);
+}
+
+function getIncorrectReviewDelayMs() {
+  return INCORRECT_RETRY_DELAY_MS;
 }
 
 function appendRecentQuestionHistory(recentQuestionHistory, question) {
