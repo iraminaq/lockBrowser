@@ -1,6 +1,13 @@
 const LOCK_STATE_KEY = "lockState";
 const RELOCK_ALARM_NAME = "relock-all-tabs";
 const DEFAULT_UNLOCK_DURATION_MS = 60 * 1000;
+const QUIZ_QUESTION = {
+  id: "apple-meaning",
+  prompt: "apple \u306e\u610f\u5473\u306f\uff1f",
+  displayAnswer: "\u308a\u3093\u3054",
+  answerReading: "\u308a\u3093\u3054",
+  explanation: "apple = \u308a\u3093\u3054"
+};
 
 chrome.runtime.onInstalled.addListener(async () => {
   await setLockState({
@@ -50,23 +57,60 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 async function handleMessage(message) {
   switch (message?.type) {
-    case "UNLOCK_REQUEST": {
-      const unlockUntil = Date.now() + DEFAULT_UNLOCK_DURATION_MS;
-      const nextState = {
-        isLocked: false,
-        unlockUntil
+    case "GET_QUIZ_QUESTION":
+      return {
+        ok: true,
+        question: getQuizQuestion()
       };
 
-      await setLockState(nextState);
-      await scheduleRelock(unlockUntil);
-      await broadcastLockState();
+    case "SUBMIT_QUIZ_READING": {
+      const submittedReading = String(message.answerReading || "");
+      const isCorrect = submittedReading === QUIZ_QUESTION.answerReading;
 
-      return { ok: true, state: nextState };
+      return {
+        ok: true,
+        isCorrect,
+        feedback: isCorrect
+          ? "\u6b63\u89e3\u3067\u3059\u3002\u78ba\u8a8d\u5f8c\u306b\u30ed\u30c3\u30af\u3092\u89e3\u9664\u3067\u304d\u307e\u3059\u3002"
+          : "\u4e0d\u6b63\u89e3\u3067\u3059\u3002\u3082\u3046\u4e00\u5ea6\u8a66\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+      };
+    }
+
+    case "UNLOCK_REQUEST": {
+      const state = await unlockForDuration();
+      return {
+        ok: true,
+        state
+      };
     }
 
     default:
       return { ok: false, error: "Unknown message type." };
   }
+}
+
+function getQuizQuestion() {
+  return {
+    id: QUIZ_QUESTION.id,
+    prompt: QUIZ_QUESTION.prompt,
+    displayAnswer: QUIZ_QUESTION.displayAnswer,
+    answerReading: QUIZ_QUESTION.answerReading,
+    explanation: QUIZ_QUESTION.explanation
+  };
+}
+
+async function unlockForDuration() {
+  const unlockUntil = Date.now() + DEFAULT_UNLOCK_DURATION_MS;
+  const nextState = {
+    isLocked: false,
+    unlockUntil
+  };
+
+  await setLockState(nextState);
+  await scheduleRelock(unlockUntil);
+  await broadcastLockState();
+
+  return nextState;
 }
 
 async function getLockState() {

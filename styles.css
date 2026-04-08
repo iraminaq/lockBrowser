@@ -22,7 +22,7 @@
 }
 
 #study-gate-lock-overlay .study-gate-panel {
-  width: min(420px, calc(100vw - 32px));
+  width: min(460px, calc(100vw - 32px));
   padding: 32px 24px;
   border-radius: 16px;
   background: #ffffff;
@@ -44,23 +44,135 @@
   line-height: 1.5;
 }
 
-#study-gate-lock-overlay .study-gate-button {
+#study-gate-lock-overlay .study-gate-question {
+  margin: 0 0 14px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+#study-gate-lock-overlay .study-gate-answer-display {
+  min-height: 56px;
+  margin: 0 0 18px;
+  border-radius: 14px;
+  padding: 12px 16px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+}
+
+#study-gate-lock-overlay .study-gate-answer-display[data-completed="true"] {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+#study-gate-lock-overlay .study-gate-answer-display[data-locked="true"] {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+#study-gate-lock-overlay .study-gate-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+#study-gate-lock-overlay .study-gate-choice-button,
+#study-gate-lock-overlay .study-gate-reset-button {
   appearance: none;
   border: 0;
-  border-radius: 999px;
-  padding: 12px 24px;
-  background: #2563eb;
-  color: #ffffff;
-  font-size: 16px;
+  border-radius: 14px;
+  padding: 14px 18px;
+  font-size: 20px;
   font-weight: 700;
+  line-height: 1.2;
   cursor: pointer;
 }
 
-#study-gate-lock-overlay .study-gate-button:hover {
+#study-gate-lock-overlay .study-gate-choice-button {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+#study-gate-lock-overlay .study-gate-choice-button:hover {
   background: #1d4ed8;
 }
 
-#study-gate-lock-overlay .study-gate-button:focus-visible {
+#study-gate-lock-overlay .study-gate-choice-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#study-gate-lock-overlay .study-gate-choice-button:focus-visible,
+#study-gate-lock-overlay .study-gate-reset-button:focus-visible {
   outline: 3px solid #93c5fd;
   outline-offset: 3px;
+}
+
+#study-gate-lock-overlay .study-gate-feedback {
+  min-height: 24px;
+  margin: 16px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+#study-gate-lock-overlay .study-gate-answer-reveal {
+  min-height: 24px;
+  margin: 12px 0 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: #111827;
+}
+
+#study-gate-lock-overlay .study-gate-feedback[data-tone="success"] {
+  color: #047857;
+}
+
+#study-gate-lock-overlay .study-gate-feedback[data-tone="error"] {
+  color: #b91c1c;
+}
+
+#study-gate-lock-overlay .study-gate-reset-button {
+  width: 100%;
+  margin-top: 12px;
+  background: #e5e7eb;
+  color: #111827;
+}
+
+#study-gate-lock-overlay .study-gate-action-button {
+  appearance: none;
+  width: 100%;
+  margin-top: 12px;
+  border: 0;
+  border-radius: 14px;
+  padding: 14px 18px;
+  background: #047857;
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+#study-gate-lock-overlay .study-gate-action-button:hover {
+  background: #065f46;
+}
+
+#study-gate-lock-overlay .study-gate-action-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#study-gate-lock-overlay .study-gate-reset-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#study-gate-lock-overlay .study-gate-reset-button:hover {
+  background: #d1d5db;
 }
