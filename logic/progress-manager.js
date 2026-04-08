@@ -29,14 +29,14 @@
     return "learning";
   }
 
-  function applyCorrectProgress(progress, now) {
+  function applyCorrectProgress(progress, now, lockIntervalMs) {
     const currentProgress = ensureProgress(progress);
     const nextLevel = currentProgress.level + 1;
 
     return {
       level: nextLevel,
       isUnseen: false,
-      reviewAt: computeNextReviewAt(nextLevel, now)
+      reviewAt: computeNextReviewAt(nextLevel, now, lockIntervalMs)
     };
   }
 
@@ -46,16 +46,17 @@
     let nextLevel = currentProgress.level;
 
     if (currentRank === "mastered") {
-      nextLevel = 19;
+      // Review+ mistakes fall to the second-highest level of the lower rank.
+      nextLevel = 18;
     } else if (currentRank === "review") {
-      nextLevel = 3;
+      nextLevel = 2;
     } else if (currentRank === "learning") {
       nextLevel = Math.max(1, currentProgress.level - 1);
     } else {
       nextLevel = 1;
     }
 
-    // After an incorrect answer, schedule the retry a little after the next lock timing.
+    // Incorrect answers come back after three lock intervals.
     return {
       level: nextLevel,
       isUnseen: false,
@@ -63,7 +64,7 @@
     };
   }
 
-  function computeNextReviewAt(level, now) {
+  function computeNextReviewAt(level, now, lockIntervalMs) {
     const rank = getRank({
       level,
       isUnseen: false,
@@ -74,8 +75,9 @@
     let jitter = 30 * MINUTE_MS;
 
     if (rank === "learning") {
-      baseDelay = 60 * MINUTE_MS * level;
-      jitter = 30 * MINUTE_MS;
+      // Unseen/learning correct answers use a lock-interval-based spacing.
+      baseDelay = getLearningCorrectBaseDelayMs(level, lockIntervalMs);
+      jitter = getLearningCorrectJitterMs(lockIntervalMs);
     } else if (rank === "review") {
       baseDelay = DAY_MS * level;
       jitter = 10 * HOUR_MS;
@@ -85,7 +87,15 @@
     }
 
     const randomizedDelay = baseDelay + randomBetween(-jitter, jitter);
-    return now + Math.max(5 * MINUTE_MS, randomizedDelay);
+    return now + Math.max(lockIntervalMs, randomizedDelay);
+  }
+
+  function getLearningCorrectBaseDelayMs(level, lockIntervalMs) {
+    return lockIntervalMs * (10 + level * 2);
+  }
+
+  function getLearningCorrectJitterMs(lockIntervalMs) {
+    return lockIntervalMs * 3;
   }
 
   function shiftReviewAtForPause(reviewAt, pauseDurationMs) {
@@ -108,6 +118,8 @@
     applyCorrectProgress,
     applyIncorrectProgress,
     computeNextReviewAt,
+    getLearningCorrectBaseDelayMs,
+    getLearningCorrectJitterMs,
     shiftReviewAtForPause
   };
 })();

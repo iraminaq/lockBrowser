@@ -5,6 +5,9 @@
   "description": "Simple lock overlay prototype for web pages.",
   "permissions": ["storage", "alarms", "tabs"],
   "host_permissions": ["http://*/*", "https://*/*"],
+  "action": {
+    "default_popup": "popup/popup.html"
+  },
   "options_page": "ui/options.html",
   "background": {
     "service_worker": "background/background.js"

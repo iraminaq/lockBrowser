@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LockBrowser Dashboard</title>
+    <link rel="stylesheet" href="dashboard.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <p class="eyebrow">LockBrowser</p>
+        <h1>問題画面</h1>
+        <p class="lead">
+          問題リストの有効化、一時停止、進捗確認、インポート入口をここに集約します。
+        </p>
+      </header>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>問題リスト</h2>
+          <button id="refresh-dashboard" class="secondary-button" type="button">再読込</button>
+        </div>
+        <div id="list-grid" class="list-grid"></div>
+      </section>
+
+      <section class="card">
+        <h2>インポート</h2>
+        <p class="section-note">
+          独自 JSON 形式の問題リストを読み込めます。CSV や export は次の段階でここへ追加します。
+        </p>
+        <div class="import-row">
+          <input id="import-file" type="file" accept="application/json" />
+          <button id="import-button" class="primary-button" type="button">JSON を取り込む</button>
+        </div>
+        <p id="import-status" class="import-status"></p>
+      </section>
+    </main>
+
+    <script src="../data/default-data.js"></script>
+    <script src="../storage/storage.js"></script>
+    <script src="import-export.js"></script>
+    <script src="dashboard.js"></script>
+  </body>
+</html>

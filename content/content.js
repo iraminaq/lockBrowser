@@ -22,6 +22,7 @@ let answerRevealElement = null;
 let resetButtonElement = null;
 let actionButtonElement = null;
 let currentQuestion = null;
+let currentQuestionKey = null;
 let currentInput = "";
 let isSubmittingAnswer = false;
 let currentChoices = [];
@@ -170,8 +171,17 @@ function applyLockState(state) {
 async function showOverlay() {
   const overlay = ensureOverlay();
   attachOverlayIfNeeded(overlay);
-  await loadCurrentQuestion();
-  resetQuizProgress();
+  const previousQuestionKey = currentQuestionKey;
+  const nextQuestion = await loadCurrentQuestion();
+
+  if (!nextQuestion) {
+    showEmptyState();
+  } else if (previousQuestionKey !== getQuestionKey(nextQuestion)) {
+    resetQuizProgress();
+  } else {
+    renderQuestion();
+  }
+
   overlayElement.hidden = false;
   overlayElement.setAttribute("data-locked", "true");
 }
@@ -187,6 +197,7 @@ function hideOverlay() {
   setFeedback("");
   setAnswerReveal("");
   currentQuestion = null;
+  currentQuestionKey = null;
   isSubmittingAnswer = false;
 }
 
@@ -203,11 +214,12 @@ function attachOverlayIfNeeded(overlay) {
 
 async function loadCurrentQuestion() {
   const response = await chrome.runtime.sendMessage({ type: "GET_CURRENT_QUESTION" });
-  if (!response?.ok || !response.question) {
+  if (!response?.ok) {
     throw new Error("Quiz question is unavailable.");
   }
 
-  currentQuestion = response.question;
+  currentQuestion = response.question || null;
+  currentQuestionKey = currentQuestion ? getQuestionKey(currentQuestion) : null;
   return currentQuestion;
 }
 
@@ -231,6 +243,42 @@ function resetQuizProgress() {
   }
 
   renderQuestion();
+}
+
+function showEmptyState() {
+  clearPenaltyCountdown();
+  currentInput = "";
+  currentChoices = [];
+  isSubmittingAnswer = false;
+  resultState = "empty";
+
+  if (questionPromptElement) {
+    questionPromptElement.textContent = "出題対象の問題がありません。";
+  }
+
+  if (answerDisplayElement) {
+    answerDisplayElement.textContent = "問題リストを有効化してください";
+    answerDisplayElement.dataset.completed = "false";
+    answerDisplayElement.dataset.locked = "true";
+  }
+
+  if (choicesContainerElement) {
+    choicesContainerElement.replaceChildren();
+    choicesContainerElement.hidden = true;
+  }
+
+  setFeedback("有効な問題リスト、または出題対象の問題がありません。");
+  setAnswerReveal("");
+
+  if (resetButtonElement) {
+    resetButtonElement.hidden = true;
+    resetButtonElement.disabled = true;
+  }
+
+  if (actionButtonElement) {
+    actionButtonElement.hidden = true;
+    actionButtonElement.disabled = true;
+  }
 }
 
 function renderQuestion() {
@@ -324,6 +372,10 @@ function setAnswerReveal(message) {
   answerRevealElement.hidden = !message;
 }
 
+function getQuestionKey(question) {
+  return `${question.listId}:${question.id}`;
+}
+
 function isInputLocked() {
   return isSubmittingAnswer || penaltyCountdownSeconds > 0;
 }
@@ -395,7 +447,7 @@ async function handleCharacterClick(character) {
 
   const answerReading = currentQuestion.answerReading;
   if (!answerReading.startsWith(currentInput)) {
-    startPenaltyCountdown();
+    await handleIncorrectAttempt();
     return;
   }
 
@@ -407,6 +459,38 @@ async function handleCharacterClick(character) {
   currentChoices = createChoicesForCurrentStep();
   setFeedback("");
   renderQuestion();
+}
+
+async function handleIncorrectAttempt() {
+  if (!currentQuestion) {
+    return;
+  }
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "REGISTER_INCORRECT_ANSWER",
+      listId: currentQuestion.listId,
+      questionId: currentQuestion.id
+    });
+
+    if (!response?.ok) {
+      throw new Error("Incorrect answer handling failed.");
+    }
+
+    if (response.shouldStartPenalty) {
+      startPenaltyCountdown();
+      return;
+    }
+
+    currentInput = "";
+    currentChoices = createChoicesForCurrentStep();
+    setFeedback(response.feedback || "不正解です。もう一度試してください。", "error");
+    setAnswerReveal("");
+    renderQuestion();
+  } catch (error) {
+    console.error("Failed to register incorrect answer:", error);
+    startPenaltyCountdown();
+  }
 }
 
 async function submitCompletedAnswer() {

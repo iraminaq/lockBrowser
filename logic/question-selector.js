@@ -7,6 +7,7 @@
       enabledListIds,
       questions,
       progressByKey,
+      settings,
       consecutiveUnseenCount,
       recentListIds,
       now
@@ -60,16 +61,16 @@
 
     // Priority order: overdue -> unseen -> upcoming -> future.
     if (due.length > 0) {
-      chosen = pickCandidateWithListBias(due, recentListIds);
-    } else if (unseen.length > 0 && consecutiveUnseenCount < 2) {
-      // Unseen questions can appear at most twice in a row.
-      chosen = pickCandidateWithListBias(unseen, recentListIds);
+      chosen = pickCandidateWithListBias(due, recentListIds, settings.sameListBiasLimit);
+    } else if (unseen.length > 0 && consecutiveUnseenCount < settings.maxConsecutiveUnseen) {
+      // Unseen questions can appear only up to the configured consecutive limit.
+      chosen = pickCandidateWithListBias(unseen, recentListIds, settings.sameListBiasLimit);
     } else if (upcoming.length > 0) {
-      chosen = pickCandidateWithListBias(upcoming, recentListIds);
+      chosen = pickCandidateWithListBias(upcoming, recentListIds, settings.sameListBiasLimit);
     } else if (future.length > 0) {
-      chosen = pickCandidateWithListBias(future, recentListIds);
+      chosen = pickCandidateWithListBias(future, recentListIds, settings.sameListBiasLimit);
     } else if (unseen.length > 0) {
-      chosen = pickCandidateWithListBias(unseen, recentListIds);
+      chosen = pickCandidateWithListBias(unseen, recentListIds, settings.sameListBiasLimit);
     }
 
     if (!chosen) {
@@ -82,7 +83,7 @@
       progressKey: chosen.progressKey,
       list: chosen.list,
       nextConsecutiveUnseenCount: chosen.progress.isUnseen
-        ? Math.min(consecutiveUnseenCount + 1, 2)
+        ? Math.min(consecutiveUnseenCount + 1, settings.maxConsecutiveUnseen)
         : 0
     };
   }
@@ -98,17 +99,23 @@
     return leftReviewAt - rightReviewAt;
   }
 
-  function pickCandidateWithListBias(candidates, recentListIds) {
+  function pickCandidateWithListBias(candidates, recentListIds, sameListBiasLimit) {
     if (candidates.length <= 1) {
       return candidates[0] || null;
     }
 
-    const recent = Array.isArray(recentListIds) ? recentListIds.slice(-2) : [];
+    const streakWindow = Math.max(1, (sameListBiasLimit || 1) - 1);
+    const recent = Array.isArray(recentListIds)
+      ? recentListIds.slice(-streakWindow)
+      : [];
     const mostRecentListId = recent[recent.length - 1];
-    const sameListStreak = recent.length === 2 && recent[0] === recent[1] ? recent[0] : null;
+    const sameListStreak =
+      recent.length > 0 && recent.every((listId) => listId === mostRecentListId)
+        ? mostRecentListId
+        : null;
 
     // Keep room for listId balancing so one enabled list does not monopolize the queue.
-    if (sameListStreak) {
+    if (sameListStreak && recent.length >= streakWindow) {
       const alternative = candidates.find((candidate) => candidate.question.listId !== sameListStreak);
       if (alternative) {
         return alternative;
