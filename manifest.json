@@ -5,14 +5,15 @@
   "description": "Simple lock overlay prototype for web pages.",
   "permissions": ["storage", "alarms", "tabs"],
   "host_permissions": ["http://*/*", "https://*/*"],
+  "options_page": "ui/options.html",
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background/background.js"
   },
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
-      "css": ["styles.css"],
+      "js": ["content/content.js"],
+      "css": ["content/styles.css"],
       "run_at": "document_start"
     }
   ]

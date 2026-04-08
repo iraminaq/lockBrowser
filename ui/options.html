@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LockBrowser Options</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <p class="eyebrow">LockBrowser</p>
+        <h1>問題リスト管理</h1>
+        <p class="lead">
+          次の実装では、ここから問題リストの有効化、無効化、インポートを行う想定です。
+          今回は土台として、現在の保存状態を確認できる最小画面を置いています。
+        </p>
+      </header>
+
+      <section class="card">
+        <h2>現在の状態</h2>
+        <div id="summary" class="summary"></div>
+      </section>
+
+      <section class="card">
+        <h2>問題リスト</h2>
+        <div id="lists" class="list-grid"></div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div>
+            <h2>Debug</h2>
+            <p class="section-note">
+              開発用の状態確認画面です。storage と現在の学習状態をここで確認できます。
+            </p>
+          </div>
+          <div class="action-row">
+            <button id="refresh-debug" class="secondary-button" type="button">Refresh</button>
+            <button id="reset-storage" class="danger-button" type="button">Reset Storage</button>
+          </div>
+        </div>
+
+        <div id="debug-sections" class="debug-grid">
+          <section class="debug-block">
+            <h3>Lock State</h3>
+            <div id="debug-lock-state"></div>
+          </section>
+
+          <section class="debug-block">
+            <h3>Active Session</h3>
+            <div id="debug-session"></div>
+          </section>
+
+          <section class="debug-block">
+            <h3>Question Lists</h3>
+            <div id="debug-question-lists"></div>
+          </section>
+
+          <section class="debug-block">
+            <h3>Enabled List IDs</h3>
+            <div id="debug-enabled-list-ids"></div>
+          </section>
+
+          <section class="debug-block">
+            <h3>Progress By Key</h3>
+            <div id="debug-progress"></div>
+          </section>
+
+          <section class="debug-block">
+            <h3>Recent Question History</h3>
+            <div id="debug-history"></div>
+          </section>
+
+          <section class="debug-block full-width">
+            <h3>Raw Storage Snapshot</h3>
+            <pre id="debug-raw-snapshot" class="raw-snapshot"></pre>
+          </section>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>次の着手候補</h2>
+        <ul class="todo-list">
+          <li>リストの enabled 切り替え</li>
+          <li>pausedAt を使った再開時の reviewAt シフト</li>
+          <li>JSON / TSV / Anki 形式のインポート</li>
+          <li>progress と出題履歴の可視化 UI を管理画面へ昇格</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="../data/default-data.js"></script>
+    <script src="../storage/storage.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

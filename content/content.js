@@ -170,7 +170,7 @@ function applyLockState(state) {
 async function showOverlay() {
   const overlay = ensureOverlay();
   attachOverlayIfNeeded(overlay);
-  await ensureQuestionLoaded();
+  await loadCurrentQuestion();
   resetQuizProgress();
   overlayElement.hidden = false;
   overlayElement.setAttribute("data-locked", "true");
@@ -186,6 +186,7 @@ function hideOverlay() {
   overlayElement.setAttribute("data-locked", "false");
   setFeedback("");
   setAnswerReveal("");
+  currentQuestion = null;
   isSubmittingAnswer = false;
 }
 
@@ -200,12 +201,8 @@ function attachOverlayIfNeeded(overlay) {
   }
 }
 
-async function ensureQuestionLoaded() {
-  if (currentQuestion) {
-    return currentQuestion;
-  }
-
-  const response = await chrome.runtime.sendMessage({ type: "GET_QUIZ_QUESTION" });
+async function loadCurrentQuestion() {
+  const response = await chrome.runtime.sendMessage({ type: "GET_CURRENT_QUESTION" });
   if (!response?.ok || !response.question) {
     throw new Error("Quiz question is unavailable.");
   }
@@ -413,13 +410,19 @@ async function handleCharacterClick(character) {
 }
 
 async function submitCompletedAnswer() {
+  if (!currentQuestion) {
+    return;
+  }
+
   isSubmittingAnswer = true;
   renderQuestion();
   setFeedback("\u6b63\u89e3\u3092\u78ba\u8a8d\u3057\u3066\u3044\u307e\u3059\u2026");
 
   try {
     const response = await chrome.runtime.sendMessage({
-      type: "SUBMIT_QUIZ_READING",
+      type: "SUBMIT_ANSWER",
+      listId: currentQuestion.listId,
+      questionId: currentQuestion.id,
       answerReading: currentInput
     });
 
@@ -428,9 +431,9 @@ async function submitCompletedAnswer() {
       currentChoices = [];
       setFeedback(response.feedback || "\u6b63\u89e3\u3067\u3059\u3002", "success");
       setAnswerReveal(
-        currentQuestion.answerReading !== currentQuestion.displayAnswer
-          ? `\u6b63\u89e3: ${currentQuestion.displayAnswer} (${currentQuestion.answerReading})`
-          : `\u6b63\u89e3: ${currentQuestion.displayAnswer}`
+        response.correctReading && response.correctReading !== response.correctAnswer
+          ? `\u6b63\u89e3: ${response.correctAnswer} (${response.correctReading})`
+          : `\u6b63\u89e3: ${response.correctAnswer || currentQuestion.displayAnswer}`
       );
       if (actionButtonElement) {
         actionButtonElement.hidden = false;
