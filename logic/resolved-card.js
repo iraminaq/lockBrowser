@@ -19,16 +19,16 @@
       .join("");
   }
 
-  function getPromptParts(item, card) {
+  function getPromptParts(item, card, mediaById) {
     if (card?.template === "front-to-back") {
-      return Array.isArray(item?.fields?.front) ? item.fields.front : [];
+      return resolveParts(item?.fields?.front, mediaById);
     }
 
-    return Array.isArray(item?.fields?.front) ? item.fields.front : [];
+    return resolveParts(item?.fields?.front, mediaById);
   }
 
-  function getExplanationParts(item) {
-    return Array.isArray(item?.fields?.explanation) ? item.fields.explanation : [];
+  function getExplanationParts(item, mediaById) {
+    return resolveParts(item?.fields?.explanation, mediaById);
   }
 
   function getCanonicalTextAnswer(card, item) {
@@ -45,10 +45,12 @@
     return partsToPlainText(item?.fields?.back);
   }
 
-  function resolveCard(list, item, card) {
+  function resolveCard(list, item, card, mediaById = createMediaMap()) {
     if (!list || !item || !card) {
       return null;
     }
+
+    const resolvedFields = resolveFields(item.fields || {}, mediaById);
 
     return {
       listId: list.id,
@@ -56,32 +58,98 @@
       itemId: item.id,
       cardId: card.id,
       template: card.template || "front-to-back",
-      fields: item.fields || {},
-      promptParts: getPromptParts(item, card),
-      explanationParts: getExplanationParts(item),
+      fields: resolvedFields,
+      promptParts: getPromptParts({ fields: resolvedFields }, card, mediaById),
+      explanationParts: getExplanationParts({ fields: resolvedFields }, mediaById),
       answer: card.answer || { type: "text", accepted: [] },
-      choices: Array.isArray(card.choices) ? card.choices.map(cloneChoice) : [],
+      choices: Array.isArray(card.choices)
+        ? card.choices.map((choice) => resolveChoice(choice, mediaById))
+        : [],
       inputMode: card.input?.mode || "keyboard",
       tags: Array.isArray(item.tags) ? [...item.tags] : [],
-      canonicalAnswer: getCanonicalTextAnswer(card, item)
+      canonicalAnswer: getCanonicalTextAnswer(card, { fields: resolvedFields })
     };
   }
 
-  function cloneChoice(choice) {
+  function resolveFields(fields, mediaById) {
+    const safeFields = fields && typeof fields === "object" ? fields : {};
+    const resolvedFields = {};
+
+    Object.entries(safeFields).forEach(([fieldKey, parts]) => {
+      resolvedFields[fieldKey] = resolveParts(parts, mediaById);
+    });
+
+    return resolvedFields;
+  }
+
+  function resolveChoice(choice, mediaById) {
     return {
       id: choice.id,
-      parts: Array.isArray(choice.parts) ? choice.parts.map((part) => ({ ...part })) : []
+      parts: resolveParts(choice.parts, mediaById)
     };
+  }
+
+  function resolveParts(parts, mediaById) {
+    const safeParts = Array.isArray(parts) ? parts : [];
+    return safeParts
+      .map((part) => resolvePart(part, mediaById))
+      .filter(Boolean);
+  }
+
+  function resolvePart(part, mediaById) {
+    if (!part || typeof part !== "object") {
+      return null;
+    }
+
+    if (part.type === "text") {
+      return {
+        type: "text",
+        value: String(part.value || "")
+      };
+    }
+
+    if (part.type === "image" || part.type === "audio") {
+      return resolveMediaPart(part, mediaById);
+    }
+
+    return { ...part };
+  }
+
+  function resolveMediaPart(part, mediaById) {
+    const media = part.mediaId ? mediaById.get(part.mediaId) : null;
+    const src = media
+      ? media.sourceType === "dataUrl"
+        ? media.data
+        : media.url
+      : String(part.src || "");
+
+    return {
+      type: part.type,
+      mediaId: part.mediaId || "",
+      src,
+      mimeType: media?.mimeType || "",
+      mediaName: media?.name || ""
+    };
+  }
+
+  function createMediaMap(questionData) {
+    const mediaEntries = Array.isArray(questionData?.media) ? questionData.media : [];
+    return new Map(
+      mediaEntries
+        .filter((media) => media && typeof media === "object" && typeof media.id === "string")
+        .map((media) => [media.id, media])
+    );
   }
 
   function getResolvedCards(questionData) {
     const lists = Array.isArray(questionData?.lists) ? questionData.lists : [];
+    const mediaById = createMediaMap(questionData);
     const resolvedCards = [];
 
     lists.forEach((list) => {
       (list.items || []).forEach((item) => {
         (item.cards || []).forEach((card) => {
-          const resolvedCard = resolveCard(list, item, card);
+          const resolvedCard = resolveCard(list, item, card, mediaById);
           if (resolvedCard) {
             resolvedCards.push(resolvedCard);
           }
@@ -107,6 +175,7 @@
   globalThis.LockBrowserResolvedCard = {
     partsToPlainText,
     resolveCard,
+    resolveParts,
     getResolvedCards,
     getResolvedCardsByListId,
     findResolvedCard,

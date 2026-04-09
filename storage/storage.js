@@ -3,6 +3,9 @@
     lockState: "lockState",
     settings: "settings",
     questionData: "questionData",
+    listSummaries: "listSummaries",
+    cardSummaries: "cardSummaries",
+    // Legacy projection keys kept only for read/write compatibility during the rename.
     questionLists: "questionLists",
     questions: "questions",
     enabledListIds: "enabledListIds",
@@ -21,7 +24,8 @@
     maxConsecutiveUnseen: 2,
     sameListBiasLimit: 3,
     questionsPerLock: 1,
-    incorrectRetryDelayMs: 10 * 1000,
+    incorrectPenaltyMs: 10 * 1000,
+    incorrectReviewDelayMs: 10 * 1000,
     answerInputMode: "candidate",
     autoStartLockOnBrowserOpen: true,
     excludedSites: []
@@ -36,15 +40,17 @@
     maxSameListBiasLimit: 10,
     minQuestionsPerLock: 1,
     maxQuestionsPerLock: 20,
-    minIncorrectRetryDelayMs: 0,
-    maxIncorrectRetryDelayMs: 24 * 60 * 60 * 1000
+    minIncorrectPenaltyMs: 0,
+    maxIncorrectPenaltyMs: 24 * 60 * 60 * 1000,
+    minIncorrectReviewDelayMs: 0,
+    maxIncorrectReviewDelayMs: 24 * 60 * 60 * 1000
   };
 
   const DEFAULT_QUIZ_STATE = {
-    currentQuestionRef: null,
+    currentCardRef: null,
     consecutiveUnseenCount: 0,
     recentListIds: [],
-    recentQuestionHistory: [],
+    recentCardHistory: [],
     currentSession: null
   };
 
@@ -58,6 +64,12 @@
 
   function normalizeSettings(settings) {
     const safeSettings = settings && typeof settings === "object" ? settings : {};
+    const legacyIncorrectDelayMs = normalizeIntegerSetting(
+      safeSettings.incorrectRetryDelayMs,
+      DEFAULT_SETTINGS.incorrectPenaltyMs,
+      SETTINGS_LIMITS.minIncorrectPenaltyMs,
+      SETTINGS_LIMITS.maxIncorrectPenaltyMs
+    );
 
     return {
       lockIntervalMs: normalizeIntegerSetting(
@@ -84,11 +96,17 @@
         SETTINGS_LIMITS.minQuestionsPerLock,
         SETTINGS_LIMITS.maxQuestionsPerLock
       ),
-      incorrectRetryDelayMs: normalizeIntegerSetting(
-        safeSettings.incorrectRetryDelayMs,
-        DEFAULT_SETTINGS.incorrectRetryDelayMs,
-        SETTINGS_LIMITS.minIncorrectRetryDelayMs,
-        SETTINGS_LIMITS.maxIncorrectRetryDelayMs
+      incorrectPenaltyMs: normalizeIntegerSetting(
+        safeSettings.incorrectPenaltyMs,
+        legacyIncorrectDelayMs,
+        SETTINGS_LIMITS.minIncorrectPenaltyMs,
+        SETTINGS_LIMITS.maxIncorrectPenaltyMs
+      ),
+      incorrectReviewDelayMs: normalizeIntegerSetting(
+        safeSettings.incorrectReviewDelayMs,
+        legacyIncorrectDelayMs,
+        SETTINGS_LIMITS.minIncorrectReviewDelayMs,
+        SETTINGS_LIMITS.maxIncorrectReviewDelayMs
       ),
       answerInputMode:
         safeSettings.answerInputMode === "keyboard" || safeSettings.answerInputMode === "candidate"
@@ -178,14 +196,21 @@
   }
 
   function normalizeQuizState(quizState) {
-    const normalizedRecentQuestionHistory = Array.isArray(quizState?.recentQuestionHistory)
-      ? quizState.recentQuestionHistory.slice(-10)
+    const normalizedRecentCardHistory = Array.isArray(
+      quizState?.recentCardHistory || quizState?.recentQuestionHistory
+    )
+      ? (quizState.recentCardHistory || quizState.recentQuestionHistory).slice(-10)
       : [];
+    const currentCardRef =
+      quizState?.currentCardRef ||
+      quizState?.currentQuestionRef ||
+      null;
 
     return {
       ...DEFAULT_QUIZ_STATE,
       ...(quizState || {}),
-      recentQuestionHistory: normalizedRecentQuestionHistory
+      currentCardRef,
+      recentCardHistory: normalizedRecentCardHistory
     };
   }
 
@@ -205,23 +230,23 @@
     return normalized;
   }
 
-  function buildLegacyProjections(questionData) {
-    const questionLists = questionData.lists.map(projectList);
+  function buildCompatibilityProjections(questionData) {
+    const listSummaries = questionData.lists.map(projectListSummary);
     const enabledListIds = questionData.lists
       .filter((list) => list.enabled !== false)
       .map((list) => list.id);
-    const questions = globalThis.LockBrowserResolvedCard
+    const cardSummaries = globalThis.LockBrowserResolvedCard
       .getResolvedCards(questionData)
-      .map(projectResolvedCard);
+      .map(projectResolvedCardSummary);
 
     return {
-      questionLists,
+      listSummaries,
       enabledListIds,
-      questions
+      cardSummaries
     };
   }
 
-  function projectList(list) {
+  function projectListSummary(list) {
     return {
       id: list.id,
       title: list.title,
@@ -232,7 +257,7 @@
     };
   }
 
-  function projectResolvedCard(resolvedCard) {
+  function projectResolvedCardSummary(resolvedCard) {
     const backText = partsToPlainText(resolvedCard.fields?.back);
     const readingText = partsToPlainText(resolvedCard.fields?.reading) || backText;
     const explanationText = partsToPlainText(resolvedCard.explanationParts);
@@ -271,13 +296,15 @@
 
   function normalizeStore(rawStore) {
     const questionData = normalizeQuestionDataRoot(rawStore[STORAGE_KEYS.questionData]);
-    const projections = buildLegacyProjections(questionData);
+    const projections = buildCompatibilityProjections(questionData);
 
     return {
       [STORAGE_KEYS.settings]: normalizeSettings(rawStore[STORAGE_KEYS.settings]),
       [STORAGE_KEYS.questionData]: questionData,
-      [STORAGE_KEYS.questionLists]: projections.questionLists,
-      [STORAGE_KEYS.questions]: projections.questions,
+      [STORAGE_KEYS.listSummaries]: projections.listSummaries,
+      [STORAGE_KEYS.cardSummaries]: projections.cardSummaries,
+      [STORAGE_KEYS.questionLists]: projections.listSummaries,
+      [STORAGE_KEYS.questions]: projections.cardSummaries,
       [STORAGE_KEYS.enabledListIds]: projections.enabledListIds,
       [STORAGE_KEYS.progressByKey]: normalizeProgressByKey(rawStore[STORAGE_KEYS.progressByKey]),
       [STORAGE_KEYS.quizState]: normalizeQuizState(rawStore[STORAGE_KEYS.quizState])
@@ -330,7 +357,7 @@
         partialStore[STORAGE_KEYS.questionData]
       );
     } else if (partialStore[STORAGE_KEYS.questionLists] || partialStore[STORAGE_KEYS.questions]) {
-      nextStore[STORAGE_KEYS.questionData] = applyLegacyQuestionMutations(
+      nextStore[STORAGE_KEYS.questionData] = applyLegacyProjectionMutations(
         currentStore[STORAGE_KEYS.questionData],
         partialStore
       );
@@ -350,7 +377,7 @@
     await chrome.storage.local.set(getPersistedStore(normalizedNextStore));
   }
 
-  function applyLegacyQuestionMutations(questionData, partialStore) {
+  function applyLegacyProjectionMutations(questionData, partialStore) {
     const nextQuestionData = clone(questionData);
 
     if (Array.isArray(partialStore[STORAGE_KEYS.questionLists])) {
@@ -475,6 +502,11 @@
     return clone(list);
   }
 
+  async function getMediaEntries() {
+    const questionData = await getQuestionData();
+    return clone(Array.isArray(questionData.media) ? questionData.media : []);
+  }
+
   async function getItemsByListId(listId) {
     const list = await getListById(listId);
     return clone(list?.items || []);
@@ -485,22 +517,22 @@
     return clone(globalThis.LockBrowserResolvedCard.getResolvedCardsByListId(questionData, listId));
   }
 
-  async function getQuestionLists() {
+  async function getListSummaries() {
     const store = await getDataStore();
-    return clone(store[STORAGE_KEYS.questionLists]);
+    return clone(store[STORAGE_KEYS.listSummaries]);
   }
 
-  async function getQuestionList(listId) {
+  async function getLegacyListSummary(listId) {
     const store = await getDataStore();
-    const questionList =
-      store[STORAGE_KEYS.questionLists].find((list) => list.id === listId) || null;
-    return clone(questionList);
+    const listSummary =
+      store[STORAGE_KEYS.listSummaries].find((list) => list.id === listId) || null;
+    return clone(listSummary);
   }
 
-  async function getQuestionsByListId(listId) {
+  async function getCardSummariesByListId(listId) {
     const store = await getDataStore();
     return clone(
-      store[STORAGE_KEYS.questions].filter((question) => question.listId === listId)
+      store[STORAGE_KEYS.cardSummaries].filter((card) => card.listId === listId)
     );
   }
 
@@ -511,15 +543,15 @@
 
   async function getListProgressSummary(listId) {
     const store = await getDataStore();
-    const questions = store[STORAGE_KEYS.questions].filter((question) => question.listId === listId);
-    const total = questions.length;
+    const cardSummaries = store[STORAGE_KEYS.cardSummaries].filter((card) => card.listId === listId);
+    const total = cardSummaries.length;
     let unseen = 0;
     let learning = 0;
     let review = 0;
     let mastered = 0;
 
-    questions.forEach((question) => {
-      const progress = getProgress(store, question.listId, question.id);
+    cardSummaries.forEach((cardSummary) => {
+      const progress = getProgress(store, cardSummary.listId, cardSummary.id);
       const rank = getProgressRank(progress);
 
       if (rank === "unseen") {
@@ -577,7 +609,7 @@
     return "learning";
   }
 
-  async function createQuestionList(input) {
+  async function createList(input) {
     const questionData = await getQuestionData();
     const nextId = createListId(input?.name || "new-list");
     const nextList = globalThis.LockBrowserSchema.normalizeList({
@@ -591,23 +623,21 @@
 
     questionData.lists.push(nextList);
     await saveQuestionData(questionData);
-    return clone(projectList(nextList));
+    return clone(projectListSummary(nextList));
   }
 
-  async function upsertQuestion(questionInput) {
+  async function upsertItem(itemInput) {
     const questionData = await getQuestionData();
-    const list = questionData.lists.find((item) => item.id === questionInput.listId);
+    const list = questionData.lists.find((item) => item.id === itemInput.listId);
 
     if (!list) {
-      throw new Error("Question list not found.");
+      throw new Error("List not found.");
     }
 
-    const normalizedItem = isNewSchemaItem(questionInput)
-      ? globalThis.LockBrowserSchema.normalizeItem(questionInput)
-      : convertLegacyQuestionToItem(questionInput);
+    const normalizedItem = globalThis.LockBrowserSchema.normalizeItem(itemInput);
 
     if (!normalizedItem) {
-      throw new Error("Question data is invalid.");
+      throw new Error("Item data is invalid.");
     }
 
     const nextItems = list.items.filter((item) => item.id !== normalizedItem.id);
@@ -619,10 +649,10 @@
     const resolvedCard = firstCard
       ? globalThis.LockBrowserResolvedCard.resolveCard(list, normalizedItem, firstCard)
       : null;
-    return clone(resolvedCard ? projectResolvedCard(resolvedCard) : normalizedItem);
+    return clone(resolvedCard ? projectResolvedCardSummary(resolvedCard) : normalizedItem);
   }
 
-  async function importQuestionListData(payload, options = {}) {
+  async function importListData(payload, options = {}) {
     const targetListId = typeof options.targetListId === "string" ? options.targetListId : null;
     const questionData = await getQuestionData();
 
@@ -635,20 +665,22 @@
       const incoming = globalThis.LockBrowserSchema.normalizeQuestionData(payload);
       const incomingItems = incoming.lists.flatMap((list) => list.items);
       targetList.items = mergeItems(targetList.items, incomingItems);
+      questionData.media = mergeMedia(questionData.media || [], incoming.media || []);
       await saveQuestionData(questionData);
 
       return {
-        list: clone(projectList(targetList)),
+        list: clone(projectListSummary(targetList)),
         importedCount: incomingItems.length
       };
     }
 
     const incomingQuestionData = globalThis.LockBrowserSchema.normalizeQuestionData(payload);
     questionData.lists = mergeLists(questionData.lists, incomingQuestionData.lists);
+    questionData.media = mergeMedia(questionData.media || [], incomingQuestionData.media || []);
     await saveQuestionData(questionData);
 
     return {
-      list: clone(projectList(questionData.lists[questionData.lists.length - 1] || incomingQuestionData.lists[0])),
+      list: clone(projectListSummary(questionData.lists[questionData.lists.length - 1] || incomingQuestionData.lists[0])),
       importedCount: incomingQuestionData.lists.reduce(
         (count, list) => count + list.items.length,
         0
@@ -684,6 +716,17 @@
     });
 
     return Array.from(itemById.values());
+  }
+
+  function mergeMedia(existingMedia, incomingMedia) {
+    const mediaById = new Map(existingMedia.map((media) => [media.id, clone(media)]));
+
+    incomingMedia.forEach((incomingEntry) => {
+      mediaById.set(incomingEntry.id, clone(incomingEntry));
+    });
+
+    // TODO: Prune orphan media when we add explicit list/item/card delete cleanup rules.
+    return Array.from(mediaById.values());
   }
 
   function isNewSchemaItem(value) {
@@ -723,9 +766,9 @@
     });
   }
 
-  function findQuestion(store, listId, questionId) {
-    return store[STORAGE_KEYS.questions].find(
-      (question) => question.listId === listId && question.id === questionId
+  function findCardSummary(store, listId, cardId) {
+    return store[STORAGE_KEYS.cardSummaries].find(
+      (card) => card.listId === listId && card.id === cardId
     );
   }
 
@@ -773,20 +816,29 @@
     getAllLists,
     getAllResolvedCards,
     getListById,
+    getMediaEntries,
     getItemsByListId,
     getCardsByListId,
-    getQuestionLists,
-    getQuestionList,
-    getQuestionsByListId,
+    getListSummaries,
+    getCardSummariesByListId,
+    getLegacyListSummary,
     getResolvedCardById,
     getListProgressSummary,
-    createQuestionList,
-    upsertQuestion,
-    importQuestionListData,
-    findQuestion,
+    createList,
+    upsertItem,
+    importListData,
+    findCardSummary,
     findResolvedCard,
     getProgress,
-    normalizeExcludedSiteEntry
+    normalizeExcludedSiteEntry,
+    // Legacy aliases kept so older callers can keep reading during migration.
+    getQuestionLists: getListSummaries,
+    getQuestionList: getLegacyListSummary,
+    getQuestionsByListId: getCardSummariesByListId,
+    createQuestionList: createList,
+    upsertQuestion: upsertItem,
+    importQuestionListData: importListData,
+    findQuestion: findCardSummary
   };
 })();
 

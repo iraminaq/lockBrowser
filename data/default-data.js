@@ -1,6 +1,7 @@
 (function () {
   const DEFAULT_QUESTION_DATA_V2 = {
     version: 2,
+    media: [],
     lists: [
       {
         id: "list-en-basic",

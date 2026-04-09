@@ -75,9 +75,20 @@
               <span>不正解ペナルティ時間</span>
               <small>間違えたあと、再度答えられるようになるまでの待ち時間です。</small>
               <div class="time-inputs">
-                <input id="incorrect-retry-delay-minutes" type="number" min="0" inputmode="numeric" />
+                <input id="incorrect-penalty-minutes" type="number" min="0" inputmode="numeric" />
                 <span class="time-suffix">分</span>
-                <input id="incorrect-retry-delay-seconds" type="number" min="0" max="59" inputmode="numeric" />
+                <input id="incorrect-penalty-seconds" type="number" min="0" max="59" inputmode="numeric" />
+                <span class="time-suffix">秒</span>
+              </div>
+            </label>
+
+            <label class="field">
+              <span>不正解した問題が、次にまた出るまでの時間</span>
+              <small>間違えた問題を復習としてどれくらい後に出し直すかを設定します。</small>
+              <div class="time-inputs">
+                <input id="incorrect-review-delay-minutes" type="number" min="0" inputmode="numeric" />
+                <span class="time-suffix">分</span>
+                <input id="incorrect-review-delay-seconds" type="number" min="0" max="59" inputmode="numeric" />
                 <span class="time-suffix">秒</span>
               </div>
             </label>

@@ -12,7 +12,7 @@ const DIGIT_CHAR_POOL = "0123456789".split("");
 
 let overlayElement = null;
 let titleElement = null;
-let questionPromptElement = null;
+let promptPartsElement = null;
 let explanationElement = null;
 let answerDisplayElement = null;
 let answerInputAreaElement = null;
@@ -22,8 +22,8 @@ let resetButtonElement = null;
 let actionButtonElement = null;
 let keyboardInputElement = null;
 
-let currentQuestion = null;
-let currentQuestionKey = null;
+let currentCard = null;
+let currentCardKey = null;
 let currentInput = "";
 let currentAnswerInputMode = "candidate";
 let currentChoices = [];
@@ -153,7 +153,7 @@ function ensureOverlay() {
 
   overlayElement = overlay;
   titleElement = title;
-  questionPromptElement = prompt;
+  promptPartsElement = prompt;
   explanationElement = explanation;
   answerDisplayElement = answerDisplay;
   answerInputAreaElement = inputArea;
@@ -184,15 +184,15 @@ async function showOverlay() {
   const overlay = ensureOverlay();
   attachOverlayIfNeeded(overlay);
 
-  const previousQuestionKey = currentQuestionKey;
-  const nextQuestion = await loadCurrentQuestion();
+  const previousCardKey = currentCardKey;
+  const nextCard = await loadCurrentCard();
 
-  if (!nextQuestion) {
+  if (!nextCard) {
     showEmptyState();
-  } else if (previousQuestionKey !== getQuestionKey(nextQuestion)) {
+  } else if (previousCardKey !== getCardKey(nextCard)) {
     resetQuizProgress();
   } else {
-    renderQuestion();
+    renderCardView();
   }
 
   overlay.hidden = false;
@@ -205,8 +205,8 @@ function hideOverlay() {
 
   clearPenaltyCountdown();
   overlayElement.hidden = true;
-  currentQuestion = null;
-  currentQuestionKey = null;
+  currentCard = null;
+  currentCardKey = null;
   currentInput = "";
   currentChoices = [];
   currentPenaltySeconds = 0;
@@ -227,17 +227,24 @@ function attachOverlayIfNeeded(overlay) {
   }
 }
 
-async function loadCurrentQuestion() {
-  const response = await chrome.runtime.sendMessage({ type: "GET_CURRENT_QUESTION" });
+async function loadCurrentCard() {
+  const response = await chrome.runtime.sendMessage({ type: "GET_CURRENT_CARD" });
   if (!response?.ok) {
-    throw new Error("Quiz question is unavailable.");
+    throw new Error("Quiz card is unavailable.");
   }
 
-  currentQuestion = response.question || null;
-  currentQuestionKey = currentQuestion ? getQuestionKey(currentQuestion) : null;
-  currentAnswerInputMode = currentQuestion?.inputMode || response.answerInputMode || "keyboard";
+  currentCard = response.card || response.question || null;
+  currentCardKey = currentCard ? getCardKey(currentCard) : null;
+  currentAnswerInputMode = currentCard?.inputMode || response.answerInputMode || "keyboard";
+  console.log("[lockBrowser/debug]", "content loaded card", {
+    listId: currentCard?.listId || null,
+    itemId: currentCard?.itemId || null,
+    cardId: currentCard?.cardId || null,
+    configuredInputMode: currentAnswerInputMode,
+    answerType: currentCard?.answer?.type || null
+  });
 
-  return currentQuestion;
+  return currentCard;
 }
 
 async function isCurrentPageExcluded() {
@@ -285,7 +292,7 @@ function resetQuizProgress() {
     actionButtonElement.textContent = "ロックを解除";
   }
 
-  renderQuestion();
+  renderCardView();
 }
 
 function showEmptyState() {
@@ -300,7 +307,7 @@ function showEmptyState() {
     titleElement.textContent = "ロック中";
   }
 
-  renderParts(questionPromptElement, [
+  renderParts(promptPartsElement, [
     { type: "text", value: "出題できる問題がありません。" }
   ]);
   renderParts(explanationElement, []);
@@ -330,8 +337,8 @@ function showEmptyState() {
   }
 }
 
-function renderQuestion() {
-  if (!currentQuestion || !questionPromptElement || !answerDisplayElement) {
+function renderCardView() {
+  if (!currentCard || !promptPartsElement || !answerDisplayElement) {
     return;
   }
 
@@ -339,8 +346,8 @@ function renderQuestion() {
     titleElement.textContent = "ロック中";
   }
 
-  renderParts(questionPromptElement, currentQuestion.promptParts || []);
-  renderParts(explanationElement, currentQuestion.explanationParts || []);
+  renderParts(promptPartsElement, currentCard.promptParts || []);
+  renderParts(explanationElement, currentCard.explanationParts || []);
 
   answerDisplayElement.textContent = currentInput;
   answerDisplayElement.dataset.completed = String(resultState === "success");
@@ -401,7 +408,7 @@ function renderTextPart(part) {
 function renderImagePart(part) {
   const src = String(part.src || "").trim();
   if (!src) {
-    return null;
+    return createMediaFallback("画像を表示できません");
   }
 
   const image = document.createElement("img");
@@ -410,13 +417,16 @@ function renderImagePart(part) {
   image.style.maxWidth = "100%";
   image.style.borderRadius = "12px";
   image.style.marginTop = "8px";
+  image.addEventListener("error", () => {
+    image.replaceWith(createMediaFallback("画像を読み込めません"));
+  });
   return image;
 }
 
 function renderAudioPart(part) {
   const src = String(part.src || "").trim();
   if (!src) {
-    return null;
+    return createMediaFallback("音声を再生できません");
   }
 
   const audio = document.createElement("audio");
@@ -424,7 +434,17 @@ function renderAudioPart(part) {
   audio.src = src;
   audio.style.width = "100%";
   audio.style.marginTop = "8px";
+  audio.addEventListener("error", () => {
+    audio.replaceWith(createMediaFallback("音声を読み込めません"));
+  });
   return audio;
+}
+
+function createMediaFallback(message) {
+  const fallback = document.createElement("p");
+  fallback.className = "study-gate-media-fallback";
+  fallback.textContent = message;
+  return fallback;
 }
 
 function renderAnswerInputArea() {
@@ -441,6 +461,12 @@ function renderAnswerInputArea() {
   }
 
   answerInputAreaElement.hidden = false;
+  console.log("[lockBrowser/debug]", "rendering answer input", {
+    cardKey: currentCardKey,
+    effectiveInputMode: getEffectiveInputMode(),
+    configuredInputMode: currentAnswerInputMode,
+    resultState
+  });
 
   if (getEffectiveInputMode() === "keyboard") {
     renderKeyboardControls();
@@ -511,7 +537,7 @@ function renderMultipleChoiceControls() {
   const choices = document.createElement("div");
   choices.className = "study-gate-choices";
 
-  (currentQuestion?.choices || []).forEach((choice) => {
+  (currentCard?.choices || []).forEach((choice) => {
     const button = document.createElement("button");
     button.className = "study-gate-choice-button";
     button.type = "button";
@@ -549,7 +575,7 @@ function getEffectiveInputMode() {
 }
 
 function createChoicesForCurrentStep() {
-  if (!currentQuestion || getEffectiveInputMode() !== "candidate") {
+  if (!currentCard || getEffectiveInputMode() !== "candidate") {
     return [];
   }
 
@@ -573,7 +599,7 @@ function createChoicesForCurrentStep() {
 }
 
 async function handleChoiceSubmit(choiceId) {
-  if (!currentQuestion || isInputLocked()) {
+  if (!currentCard || isInputLocked()) {
     return;
   }
 
@@ -683,12 +709,12 @@ function buildAnswerRevealMessage(correctAnswer, correctReading) {
   return `正解: ${correctAnswer}`;
 }
 
-function getQuestionKey(question) {
-  return `${question.listId}:${question.cardId}`;
+function getCardKey(card) {
+  return `${card.listId}:${card.cardId}`;
 }
 
 function getCanonicalAnswer() {
-  const answer = currentQuestion?.answer;
+  const answer = currentCard?.answer;
   if (!answer || answer.type !== "text") {
     return "";
   }
@@ -697,11 +723,11 @@ function getCanonicalAnswer() {
     return String(answer.accepted[0] || "");
   }
 
-  return String(currentQuestion.canonicalAnswer || "");
+  return String(currentCard.canonicalAnswer || "");
 }
 
 function getDisplayAnswer() {
-  return String(currentQuestion?.displayAnswer || "");
+  return String(currentCard?.displayAnswer || "");
 }
 
 function isInputLocked() {
@@ -714,7 +740,7 @@ function startPenaltyCountdown(durationSeconds) {
   currentInput = "";
   currentChoices = [];
   resultState = "incorrect-feedback";
-  renderQuestion();
+  renderCardView();
   updatePenaltyFeedback();
 
   penaltyTimerId = window.setInterval(() => {
@@ -743,7 +769,7 @@ function showRetryReadyState() {
   resultState = "retry-ready";
   currentInput = "";
   currentChoices = [];
-  renderQuestion();
+  renderCardView();
   setFeedback("再挑戦できます。", "error");
 
   if (resetButtonElement) {
@@ -759,7 +785,7 @@ function updatePenaltyFeedback() {
 }
 
 async function handleCharacterClick(character) {
-  if (!currentQuestion || isInputLocked()) {
+  if (!currentCard || isInputLocked()) {
     return;
   }
 
@@ -778,11 +804,11 @@ async function handleCharacterClick(character) {
   }
 
   currentChoices = createChoicesForCurrentStep();
-  renderQuestion();
+  renderCardView();
 }
 
 async function handleKeyboardSubmit() {
-  if (!currentQuestion || isInputLocked()) {
+  if (!currentCard || isInputLocked()) {
     return;
   }
 
@@ -798,15 +824,15 @@ async function handleKeyboardSubmit() {
 }
 
 async function handleIncorrectAttempt() {
-  if (!currentQuestion) {
+  if (!currentCard) {
     return;
   }
 
   try {
     const response = await chrome.runtime.sendMessage({
       type: "REGISTER_INCORRECT_ANSWER",
-      listId: currentQuestion.listId,
-      cardId: currentQuestion.cardId
+      listId: currentCard.listId,
+      cardId: currentCard.cardId
     });
 
     if (!response?.ok) {
@@ -824,7 +850,7 @@ async function handleIncorrectAttempt() {
     resultState = "retry-ready";
     currentInput = "";
     currentChoices = [];
-    renderQuestion();
+    renderCardView();
     if (resetButtonElement) {
       resetButtonElement.hidden = false;
       resetButtonElement.disabled = false;
@@ -837,19 +863,19 @@ async function handleIncorrectAttempt() {
 }
 
 async function submitCurrentAnswer() {
-  if (!currentQuestion) {
+  if (!currentCard) {
     return;
   }
 
   isSubmittingAnswer = true;
-  renderQuestion();
+  renderCardView();
   setFeedback("正解を確認しています…");
 
   try {
     const response = await chrome.runtime.sendMessage({
       type: "SUBMIT_ANSWER",
-      listId: currentQuestion.listId,
-      cardId: currentQuestion.cardId,
+      listId: currentCard.listId,
+      cardId: currentCard.cardId,
       answerText: currentInput
     });
 
@@ -857,7 +883,7 @@ async function submitCurrentAnswer() {
       if (response.shouldUnlock) {
         resultState = "success";
         currentChoices = [];
-        renderQuestion();
+        renderCardView();
         setFeedback(response.feedback || "正解です。", "success");
         setAnswerReveal(buildAnswerRevealMessage(response.correctAnswer, response.correctReading));
         if (actionButtonElement) {
@@ -870,18 +896,18 @@ async function submitCurrentAnswer() {
 
       setFeedback(response.feedback || "正解です。次の問題へ進みます。", "success");
       setAnswerReveal("");
-      const previousQuestionKey = currentQuestionKey;
-      const nextQuestion = await loadCurrentQuestion();
+      const previousCardKey = currentCardKey;
+      const nextCard = await loadCurrentCard();
 
-      if (!nextQuestion) {
+      if (!nextCard) {
         showEmptyState();
         return;
       }
 
-      if (previousQuestionKey !== getQuestionKey(nextQuestion)) {
+      if (previousCardKey !== getCardKey(nextCard)) {
         resetQuizProgress();
       } else {
-        renderQuestion();
+        renderCardView();
       }
       return;
     }
@@ -893,7 +919,7 @@ async function submitCurrentAnswer() {
   } finally {
     isSubmittingAnswer = false;
     if (overlayElement && !overlayElement.hidden) {
-      renderQuestion();
+      renderCardView();
     }
   }
 }
@@ -929,7 +955,7 @@ async function handleUnlockButtonClick() {
   } finally {
     isSubmittingAnswer = false;
     if (overlayElement && !overlayElement.hidden) {
-      renderQuestion();
+      renderCardView();
     }
   }
 }

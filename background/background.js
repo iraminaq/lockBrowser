@@ -59,12 +59,15 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 async function handleMessage(message) {
   switch (message?.type) {
+    case "GET_CURRENT_CARD":
+    // Compatibility alias while older callers move to card-based naming.
     case "GET_CURRENT_QUESTION": {
       const settings = await LockBrowserStorage.getSettings();
-      const question = await getCurrentQuestion(settings);
+      const card = await getCurrentCard(settings);
       return {
         ok: true,
-        question,
+        card,
+        question: card,
         answerInputMode: settings.answerInputMode
       };
     }
@@ -107,10 +110,10 @@ async function handleMessage(message) {
     case "SET_LIST_ENABLED": {
       const listId = String(message.listId || "");
       const enabled = Boolean(message.enabled);
-      const store = await updateQuestionListEnabled(listId, enabled);
+      const store = await updateListEnabledState(listId, enabled);
       return {
         ok: true,
-        questionLists: store[LockBrowserStorage.STORAGE_KEYS.questionLists],
+        listSummaries: store[LockBrowserStorage.STORAGE_KEYS.listSummaries],
         enabledListIds: store[LockBrowserStorage.STORAGE_KEYS.enabledListIds]
       };
     }
@@ -125,6 +128,12 @@ async function handleMessage(message) {
 
     case "SETTINGS_UPDATED": {
       const settings = await LockBrowserStorage.getSettings();
+      console.log(DEBUG_LOG_PREFIX, "settings updated", {
+        lockIntervalMs: settings.lockIntervalMs,
+        answerInputMode: settings.answerInputMode,
+        incorrectPenaltyMs: settings.incorrectPenaltyMs,
+        incorrectReviewDelayMs: settings.incorrectReviewDelayMs
+      });
       const state = await applyUpdatedSettings(settings);
       return { ok: true, state, settings };
     }
@@ -174,22 +183,26 @@ async function initializeLockBehavior({ forceApply }) {
   }
 }
 
-async function getCurrentQuestion(settings) {
+async function getCurrentCard(settings) {
   const store = await LockBrowserStorage.getDataStore();
   const quizState = store[LockBrowserStorage.STORAGE_KEYS.quizState];
-  const excludedQuestionKeys = quizState.currentSession?.answeredQuestionKeys || [];
+  const excludedCardKeys =
+    quizState.currentSession?.answeredCardKeys ||
+    // Compatibility fallback while older session state keys still exist.
+    quizState.currentSession?.answeredQuestionKeys ||
+    [];
   const questionData = store[LockBrowserStorage.STORAGE_KEYS.questionData];
   const resolvedCards = globalThis.LockBrowserResolvedCard.getResolvedCards(questionData);
 
-  if (quizState.currentQuestionRef) {
+  if (quizState.currentCardRef) {
     const existing = LockBrowserStorage.findResolvedCard(
       store,
-      quizState.currentQuestionRef.listId,
-      quizState.currentQuestionRef.cardId
+      quizState.currentCardRef.listId,
+      quizState.currentCardRef.cardId
     );
 
-    if (existing && isQuestionActive(existing, store)) {
-      return toPublicQuestion(
+    if (existing && isCardActive(existing, store)) {
+      return toPublicCard(
         existing,
         LockBrowserStorage.getProgress(store, existing.listId, existing.cardId),
         settings
@@ -199,21 +212,21 @@ async function getCurrentQuestion(settings) {
     await LockBrowserStorage.setDataStore({
       [LockBrowserStorage.STORAGE_KEYS.quizState]: {
         ...quizState,
-        currentQuestionRef: null,
+        currentCardRef: null,
         currentSession: null
       }
     });
   }
 
-  const selected = LockBrowserQuestionSelector.selectNextQuestion({
-    questionLists: store[LockBrowserStorage.STORAGE_KEYS.questionLists],
+  const selected = LockBrowserQuestionSelector.selectNextCard({
+    listSummaries: store[LockBrowserStorage.STORAGE_KEYS.listSummaries],
     enabledListIds: store[LockBrowserStorage.STORAGE_KEYS.enabledListIds],
     resolvedCards,
     progressByKey: store[LockBrowserStorage.STORAGE_KEYS.progressByKey],
     settings,
     consecutiveUnseenCount: quizState.consecutiveUnseenCount,
     recentListIds: quizState.recentListIds,
-    excludedQuestionKeys,
+    excludedCardKeys,
     now: Date.now()
   });
 
@@ -221,43 +234,44 @@ async function getCurrentQuestion(settings) {
     await LockBrowserStorage.setDataStore({
       [LockBrowserStorage.STORAGE_KEYS.quizState]: {
         ...quizState,
-        currentQuestionRef: null,
+        currentCardRef: null,
         currentSession: null
       }
     });
     return null;
   }
 
-  const availableQuestionCount = LockBrowserQuestionSelector.countSelectableQuestions({
-    questionLists: store[LockBrowserStorage.STORAGE_KEYS.questionLists],
+  const availableCardCount = LockBrowserQuestionSelector.countSelectableCards({
+    listSummaries: store[LockBrowserStorage.STORAGE_KEYS.listSummaries],
     enabledListIds: store[LockBrowserStorage.STORAGE_KEYS.enabledListIds],
     resolvedCards,
-    excludedQuestionKeys
+    excludedCardKeys
   });
-  const nextSession = createQuestionSession(
+  const nextSession = createCardSession(
     selected.resolvedCard,
     quizState.currentSession,
     settings,
-    availableQuestionCount
+    availableCardCount
   );
 
   await LockBrowserStorage.setDataStore({
     [LockBrowserStorage.STORAGE_KEYS.quizState]: {
-      currentQuestionRef: {
+      currentCardRef: {
         listId: selected.resolvedCard.listId,
         cardId: selected.resolvedCard.cardId
       },
       consecutiveUnseenCount: selected.nextConsecutiveUnseenCount,
       recentListIds: appendRecentListId(quizState.recentListIds, selected.resolvedCard.listId),
-      recentQuestionHistory: appendRecentQuestionHistory(
-        quizState.recentQuestionHistory,
+      recentCardHistory: appendRecentCardHistory(
+        // Compatibility fallback while older history entries still exist.
+        quizState.recentCardHistory || quizState.recentQuestionHistory,
         selected.resolvedCard
       ),
       currentSession: nextSession
     }
   });
 
-  console.log(DEBUG_LOG_PREFIX, "question selected", {
+  console.log(DEBUG_LOG_PREFIX, "card selected", {
     listId: selected.resolvedCard.listId,
     cardId: selected.resolvedCard.cardId,
     progress: selected.progress,
@@ -266,13 +280,13 @@ async function getCurrentQuestion(settings) {
     requiredQuestionCount: nextSession.requiredQuestionCount
   });
 
-  return toPublicQuestion(selected.resolvedCard, selected.progress, settings);
+  return toPublicCard(selected.resolvedCard, selected.progress, settings);
 }
 
-function isQuestionActive(question, store) {
-  const questionLists = store[LockBrowserStorage.STORAGE_KEYS.questionLists];
+function isCardActive(card, store) {
+  const listSummaries = store[LockBrowserStorage.STORAGE_KEYS.listSummaries];
   const enabledListIds = new Set(store[LockBrowserStorage.STORAGE_KEYS.enabledListIds]);
-  const list = questionLists.find((item) => item.id === question.listId);
+  const list = listSummaries.find((item) => item.id === card.listId);
 
   return Boolean(list && list.enabled !== false && enabledListIds.has(list.id));
 }
@@ -312,19 +326,19 @@ async function submitAnswer(input) {
       settings.lockIntervalMs
     );
     nextProgressByKey[progressKey] = nextProgress;
-    const answeredQuestionKeys = appendAnsweredQuestionKey(
-      currentSession.answeredQuestionKeys,
+    const answeredCardKeys = appendAnsweredCardKey(
+      currentSession.answeredCardKeys,
       progressKey
     );
     nextSession = {
       ...currentSession,
       completedQuestionCount: currentSession.completedQuestionCount + 1,
-      answeredQuestionKeys,
+      answeredCardKeys,
       hasIncorrectProgressUpdated: false,
       isPenaltyActive: false
     };
     console.log(DEBUG_LOG_PREFIX, "answer correct", {
-      questionKey: progressKey,
+      cardKey: progressKey,
       nextProgress,
       completedQuestionCount: nextSession.completedQuestionCount,
       requiredQuestionCount: nextSession.requiredQuestionCount
@@ -357,13 +371,13 @@ async function submitAnswer(input) {
     [LockBrowserStorage.STORAGE_KEYS.progressByKey]: nextProgressByKey,
     [LockBrowserStorage.STORAGE_KEYS.quizState]: {
       ...quizState,
-      currentQuestionRef: isCorrect ? null : quizState.currentQuestionRef,
+      currentCardRef: isCorrect ? null : quizState.currentCardRef,
       currentSession: isCorrect
         ? sessionCompleted
           ? null
           : {
               ...nextSession,
-              questionKey: null
+              cardKey: null
             }
         : nextSession
     }
@@ -376,15 +390,17 @@ async function submitAnswer(input) {
     isCorrect,
     shouldUnlock: isCorrect && sessionCompleted,
     sessionCompleted,
-    completedQuestionCount: isCorrect ? nextSession.completedQuestionCount : currentSession.completedQuestionCount,
+    completedQuestionCount: isCorrect
+      ? nextSession.completedQuestionCount
+      : currentSession.completedQuestionCount,
     requiredQuestionCount: currentSession.requiredQuestionCount,
     feedback: isCorrect
       ? sessionCompleted
         ? "正解です。確認後にロックを解除できます。"
         : `正解です。次の問題へ進みます。 (${nextSession.completedQuestionCount}/${nextSession.requiredQuestionCount})`
       : "不正解です。もう一度試してください。",
-    correctAnswer: getDisplayAnswer(resolvedCard),
-    correctReading: getCanonicalAnswer(resolvedCard),
+    correctAnswer: getDisplayValue(resolvedCard),
+    correctReading: getCanonicalTextAnswer(resolvedCard),
     progress: nextProgress,
     rank: LockBrowserProgress.getRank(nextProgress)
   };
@@ -415,7 +431,7 @@ async function registerIncorrectAnswer(input) {
   );
 
   if (currentProgress.isUnseen) {
-    // Unseen questions can be retried immediately without a penalty update.
+    // Unseen cards can be retried immediately without a penalty update.
     currentSession.isPenaltyActive = false;
     await LockBrowserStorage.setDataStore({
       [LockBrowserStorage.STORAGE_KEYS.quizState]: {
@@ -427,9 +443,9 @@ async function registerIncorrectAnswer(input) {
       return {
       shouldStartPenalty: false,
       feedback: "不正解です。初めての問題なので、すぐに再挑戦できます。",
-      correctAnswer: getDisplayAnswer(resolvedCard),
-      correctReading: getCanonicalAnswer(resolvedCard),
-      penaltyDurationMs: settings.incorrectRetryDelayMs
+      correctAnswer: getDisplayValue(resolvedCard),
+      correctReading: getCanonicalTextAnswer(resolvedCard),
+      penaltyDurationMs: getIncorrectPenaltyMs(settings)
     };
   }
 
@@ -454,9 +470,9 @@ async function registerIncorrectAnswer(input) {
   return {
     shouldStartPenalty: true,
     feedback: "不正解です。もう一度試してください。",
-    correctAnswer: getDisplayAnswer(resolvedCard),
-    correctReading: getCanonicalAnswer(resolvedCard),
-    penaltyDurationMs: settings.incorrectRetryDelayMs
+    correctAnswer: getDisplayValue(resolvedCard),
+    correctReading: getCanonicalTextAnswer(resolvedCard),
+    penaltyDurationMs: getIncorrectPenaltyMs(settings)
   };
 }
 
@@ -471,6 +487,7 @@ function applyIncorrectAttempt(input) {
     now
   } = input;
   const incorrectReviewDelayMs = getIncorrectReviewDelayMs(settings);
+  const incorrectPenaltyMs = getIncorrectPenaltyMs(settings);
   let nextProgress = currentProgress;
   let nextProgressByKey = {
     ...store[LockBrowserStorage.STORAGE_KEYS.progressByKey]
@@ -481,7 +498,7 @@ function applyIncorrectAttempt(input) {
   };
 
   if (!currentSession.hasIncorrectProgressUpdated) {
-    // Incorrect progress updates only once per displayed question session.
+    // Incorrect progress updates only once per displayed card session.
     nextProgress = LockBrowserProgress.applyIncorrectProgress(
       currentProgress,
       now,
@@ -490,14 +507,17 @@ function applyIncorrectAttempt(input) {
     nextProgressByKey[progressKey] = nextProgress;
     nextSession.hasIncorrectProgressUpdated = true;
     console.log(DEBUG_LOG_PREFIX, "first incorrect progress update applied", {
-      questionKey: progressKey,
+      cardKey: progressKey,
       nextProgress,
+      incorrectPenaltyMs,
       incorrectReviewDelayMs
     });
   } else {
     console.log(DEBUG_LOG_PREFIX, "incorrect progress update skipped for current session", {
-      questionKey: progressKey,
-      sessionId: currentSession.sessionId
+      cardKey: progressKey,
+      sessionId: currentSession.sessionId,
+      incorrectPenaltyMs,
+      incorrectReviewDelayMs
     });
   }
 
@@ -509,28 +529,33 @@ function applyIncorrectAttempt(input) {
   };
 }
 
-function createQuestionSession(resolvedCard, previousSession, settings, availableQuestionCount) {
+function createCardSession(resolvedCard, previousSession, settings, availableCardCount) {
   return {
     sessionId: previousSession?.sessionId || createSessionId(),
-    questionKey: LockBrowserStorage.createProgressKey(resolvedCard.listId, resolvedCard.cardId),
+    cardKey: LockBrowserStorage.createProgressKey(resolvedCard.listId, resolvedCard.cardId),
     hasIncorrectProgressUpdated: false,
     isPenaltyActive: false,
     completedQuestionCount: normalizeCompletedQuestionCount(previousSession?.completedQuestionCount),
-    answeredQuestionKeys: normalizeAnsweredQuestionKeys(previousSession?.answeredQuestionKeys),
+    answeredCardKeys: normalizeAnsweredCardKeys(
+      // Compatibility fallback while older session state keys still exist.
+      previousSession?.answeredCardKeys || previousSession?.answeredQuestionKeys
+    ),
     requiredQuestionCount: normalizeRequiredQuestionCount(
       previousSession?.requiredQuestionCount,
       settings.questionsPerLock,
-      availableQuestionCount
+      availableCardCount
     )
   };
 }
 
-function ensureSession(session, questionKey, settings) {
-  if (session && session.questionKey === questionKey) {
+function ensureSession(session, cardKey, settings) {
+  // Compatibility fallback while older session payloads still carry question-based keys.
+  if (session && (session.cardKey === cardKey || session.questionKey === cardKey)) {
     return {
       ...session,
+      cardKey: session.cardKey || session.questionKey || cardKey,
       completedQuestionCount: normalizeCompletedQuestionCount(session.completedQuestionCount),
-      answeredQuestionKeys: normalizeAnsweredQuestionKeys(session.answeredQuestionKeys),
+      answeredCardKeys: normalizeAnsweredCardKeys(session.answeredCardKeys || session.answeredQuestionKeys),
       requiredQuestionCount: normalizeRequiredQuestionCount(
         session.requiredQuestionCount,
         settings.questionsPerLock
@@ -540,11 +565,11 @@ function ensureSession(session, questionKey, settings) {
 
   return {
     sessionId: createSessionId(),
-    questionKey,
+    cardKey,
     hasIncorrectProgressUpdated: false,
     isPenaltyActive: false,
     completedQuestionCount: 0,
-    answeredQuestionKeys: [],
+    answeredCardKeys: [],
     requiredQuestionCount: normalizeRequiredQuestionCount(null, settings.questionsPerLock, 1)
   };
 }
@@ -566,7 +591,7 @@ function normalizeRequiredQuestionCount(value, fallback, availableQuestionCount)
   return Math.min(safeFallback, availableQuestionCount);
 }
 
-function normalizeAnsweredQuestionKeys(value) {
+function normalizeAnsweredCardKeys(value) {
   return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
 }
 
@@ -574,10 +599,10 @@ function createSessionId() {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function appendAnsweredQuestionKey(answeredQuestionKeys, questionKey) {
-  const nextKeys = normalizeAnsweredQuestionKeys(answeredQuestionKeys);
-  if (!nextKeys.includes(questionKey)) {
-    nextKeys.push(questionKey);
+function appendAnsweredCardKey(answeredCardKeys, cardKey) {
+  const nextKeys = normalizeAnsweredCardKeys(answeredCardKeys);
+  if (!nextKeys.includes(cardKey)) {
+    nextKeys.push(cardKey);
   }
 
   return nextKeys;
@@ -589,7 +614,11 @@ function appendRecentListId(recentListIds, listId) {
 }
 
 function getIncorrectReviewDelayMs(settings) {
-  return settings.incorrectRetryDelayMs;
+  return settings.incorrectReviewDelayMs;
+}
+
+function getIncorrectPenaltyMs(settings) {
+  return settings.incorrectPenaltyMs;
 }
 
 function shouldCompleteSessionAfterCorrect(input) {
@@ -602,20 +631,20 @@ function shouldCompleteSessionAfterCorrect(input) {
     return true;
   }
 
-  const remainingSelectableCount = LockBrowserQuestionSelector.countSelectableQuestions({
-    questionLists: store[LockBrowserStorage.STORAGE_KEYS.questionLists],
+  const remainingSelectableCount = LockBrowserQuestionSelector.countSelectableCards({
+    listSummaries: store[LockBrowserStorage.STORAGE_KEYS.listSummaries],
     enabledListIds: store[LockBrowserStorage.STORAGE_KEYS.enabledListIds],
     resolvedCards: globalThis.LockBrowserResolvedCard.getResolvedCards(
       store[LockBrowserStorage.STORAGE_KEYS.questionData]
     ),
-    excludedQuestionKeys: nextSession.answeredQuestionKeys
+    excludedCardKeys: nextSession.answeredCardKeys
   });
 
   if (remainingSelectableCount > 0) {
     return false;
   }
 
-  console.log(DEBUG_LOG_PREFIX, "session completed early because no more questions are available", {
+  console.log(DEBUG_LOG_PREFIX, "session completed early because no more cards are available", {
     sessionId: nextSession.sessionId,
     completedQuestionCount: nextSession.completedQuestionCount,
     requiredQuestionCount: nextSession.requiredQuestionCount
@@ -624,16 +653,16 @@ function shouldCompleteSessionAfterCorrect(input) {
   return nextSession.completedQuestionCount > 0;
 }
 
-function appendRecentQuestionHistory(recentQuestionHistory, resolvedCard) {
-  const nextRecentQuestionHistory = Array.isArray(recentQuestionHistory)
+function appendRecentCardHistory(recentCardHistory, resolvedCard) {
+  const nextRecentCardHistory = Array.isArray(recentCardHistory)
     ? [
-        ...recentQuestionHistory,
+        ...recentCardHistory,
         {
           at: Date.now(),
           listId: resolvedCard.listId,
           itemId: resolvedCard.itemId,
           cardId: resolvedCard.cardId,
-          questionKey: LockBrowserStorage.createProgressKey(
+          cardKey: LockBrowserStorage.createProgressKey(
             resolvedCard.listId,
             resolvedCard.cardId
           ),
@@ -648,7 +677,7 @@ function appendRecentQuestionHistory(recentQuestionHistory, resolvedCard) {
           listId: resolvedCard.listId,
           itemId: resolvedCard.itemId,
           cardId: resolvedCard.cardId,
-          questionKey: LockBrowserStorage.createProgressKey(
+          cardKey: LockBrowserStorage.createProgressKey(
             resolvedCard.listId,
             resolvedCard.cardId
           ),
@@ -658,13 +687,14 @@ function appendRecentQuestionHistory(recentQuestionHistory, resolvedCard) {
         }
       ];
 
-  return nextRecentQuestionHistory.slice(-10);
+  return nextRecentCardHistory.slice(-10);
 }
 
-async function updateQuestionListEnabled(listId, enabled) {
+async function updateListEnabledState(listId, enabled) {
   const store = await LockBrowserStorage.getDataStore();
   const now = Date.now();
-  const currentLists = store[LockBrowserStorage.STORAGE_KEYS.questionLists];
+  const questionData = structuredClone(store[LockBrowserStorage.STORAGE_KEYS.questionData]);
+  const currentLists = questionData.lists;
   const nextLists = currentLists.map((list) => {
     if (list.id !== listId) {
       return list;
@@ -697,7 +727,7 @@ async function updateQuestionListEnabled(listId, enabled) {
     const pauseDurationMs = Math.max(0, now - previousList.pausedAt);
     if (pauseDurationMs >= MIN_PAUSE_SHIFT_MS) {
       nextProgressByKey = shiftListProgressForPause(
-        store[LockBrowserStorage.STORAGE_KEYS.questions],
+        store[LockBrowserStorage.STORAGE_KEYS.cardSummaries],
         nextProgressByKey,
         listId,
         pauseDurationMs
@@ -715,31 +745,27 @@ async function updateQuestionListEnabled(listId, enabled) {
     }
   }
 
+  questionData.lists = nextLists;
   await LockBrowserStorage.setDataStore({
-    [LockBrowserStorage.STORAGE_KEYS.questionLists]: nextLists,
+    [LockBrowserStorage.STORAGE_KEYS.questionData]: questionData,
     [LockBrowserStorage.STORAGE_KEYS.enabledListIds]: nextEnabledListIds,
     [LockBrowserStorage.STORAGE_KEYS.progressByKey]: nextProgressByKey
   });
 
-  return {
-    ...store,
-    [LockBrowserStorage.STORAGE_KEYS.questionLists]: nextLists,
-    [LockBrowserStorage.STORAGE_KEYS.enabledListIds]: nextEnabledListIds,
-    [LockBrowserStorage.STORAGE_KEYS.progressByKey]: nextProgressByKey
-  };
+  return LockBrowserStorage.getDataStore();
 }
 
-function shiftListProgressForPause(questions, progressByKey, listId, pauseDurationMs) {
+function shiftListProgressForPause(cardSummaries, progressByKey, listId, pauseDurationMs) {
   const nextProgressByKey = {
     ...progressByKey
   };
 
-  for (const question of questions) {
-    if (question.listId !== listId) {
+  for (const cardSummary of cardSummaries) {
+    if (cardSummary.listId !== listId) {
       continue;
     }
 
-    const progressKey = LockBrowserStorage.createProgressKey(question.listId, question.id);
+    const progressKey = LockBrowserStorage.createProgressKey(cardSummary.listId, cardSummary.id);
     const currentProgress = progressByKey[progressKey];
     if (!currentProgress) {
       continue;
@@ -759,7 +785,7 @@ function shiftListProgressForPause(questions, progressByKey, listId, pauseDurati
   return nextProgressByKey;
 }
 
-function toPublicQuestion(resolvedCard, progress, settings) {
+function toPublicCard(resolvedCard, progress, settings) {
   return {
     listId: resolvedCard.listId,
     itemId: resolvedCard.itemId,
@@ -771,18 +797,18 @@ function toPublicQuestion(resolvedCard, progress, settings) {
     answer: resolvedCard.answer,
     choices: resolvedCard.choices,
     inputMode: resolvedCard.inputMode || settings.answerInputMode || "keyboard",
-    canonicalAnswer: getCanonicalAnswer(resolvedCard),
-    displayAnswer: getDisplayAnswer(resolvedCard),
+    canonicalAnswer: getCanonicalTextAnswer(resolvedCard),
+    displayAnswer: getDisplayValue(resolvedCard),
     progress,
     tags: resolvedCard.tags
   };
 }
 
-function getDisplayAnswer(resolvedCard) {
+function getDisplayValue(resolvedCard) {
   return globalThis.LockBrowserResolvedCard.partsToPlainText(resolvedCard.fields?.back);
 }
 
-function getCanonicalAnswer(resolvedCard) {
+function getCanonicalTextAnswer(resolvedCard) {
   return globalThis.LockBrowserResolvedCard.getCanonicalTextAnswer(
     { answer: resolvedCard.answer },
     { fields: resolvedCard.fields }
@@ -829,6 +855,13 @@ async function scheduleRelock(unlockUntil) {
 
 async function applyUpdatedSettings(settings) {
   const currentState = await LockBrowserLockState.getLockState();
+  console.log(DEBUG_LOG_PREFIX, "applying settings to lock state", {
+    isLocked: currentState.isLocked,
+    isPaused: currentState.isPaused,
+    unlockUntil: currentState.unlockUntil,
+    lockIntervalMs: settings.lockIntervalMs,
+    answerInputMode: settings.answerInputMode
+  });
 
   if (currentState.isPaused) {
     await broadcastLockState();

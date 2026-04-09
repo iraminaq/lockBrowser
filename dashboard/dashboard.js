@@ -6,8 +6,8 @@ let selectedImportFile = null;
 let addCardDrafts = [];
 let editCardDrafts = [];
 
-async function getQuestionLists() {
-  return LockBrowserStorage.getQuestionLists();
+async function getListSummaries() {
+  return LockBrowserStorage.getListSummaries();
 }
 
 async function getListById(listId) {
@@ -35,18 +35,18 @@ async function setListEnabled(listId, enabled) {
 }
 
 async function createList(name) {
-  return LockBrowserStorage.createQuestionList({ name });
+  return LockBrowserStorage.createList({ name });
 }
 
 async function saveItem(item) {
-  return LockBrowserStorage.upsertQuestion(item);
+  return LockBrowserStorage.upsertItem(item);
 }
 
 async function renderDashboard() {
-  const questionLists = await getQuestionLists();
+  const listSummaries = await getListSummaries();
   syncViewState();
   renderImportModalState();
-  await renderListCards(questionLists);
+  await renderListCards(listSummaries);
   await renderDetailSection();
 }
 
@@ -55,11 +55,11 @@ function syncViewState() {
   document.getElementById("detail-view").hidden = !selectedListId;
 }
 
-async function renderListCards(questionLists) {
+async function renderListCards(listSummaries) {
   const listGrid = document.getElementById("list-grid");
   listGrid.replaceChildren();
 
-  if (questionLists.length === 0) {
+  if (listSummaries.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
     empty.textContent = "まだ問題リストがありません。";
@@ -68,7 +68,7 @@ async function renderListCards(questionLists) {
   }
 
   const cards = await Promise.all(
-    questionLists.map(async (list) => {
+    listSummaries.map(async (list) => {
       const [items, cardsForList, progressSummary] = await Promise.all([
         getItemsByListId(list.id),
         getCardsByListId(list.id),
@@ -148,14 +148,14 @@ async function renderDetailSection() {
 }
 
 function renderItemList(items) {
-  const questionList = document.getElementById("question-list");
-  questionList.replaceChildren();
+  const itemListElement = document.getElementById("question-list");
+  itemListElement.replaceChildren();
 
   if (items.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
     empty.textContent = "まだ item がありません。";
-    questionList.append(empty);
+    itemListElement.append(empty);
     return;
   }
 
@@ -169,7 +169,7 @@ function renderItemList(items) {
     editButton.textContent = "編集";
     editButton.addEventListener("click", () => {
       editingItemId = item.id;
-      void openEditQuestionModal();
+      void openEditItemModal();
     });
 
     const body = document.createElement("div");
@@ -188,7 +188,7 @@ function renderItemList(items) {
     `;
 
     article.append(editButton, body);
-    questionList.append(article);
+    itemListElement.append(article);
   });
 }
 
@@ -259,7 +259,7 @@ async function handleCreateListSubmit(event) {
   await renderDashboard();
 }
 
-async function handleSaveAddQuestion(event) {
+async function handleSaveAddItem(event) {
   event.preventDefault();
   const item = buildItemFromForm("add", selectedListId, null);
   await saveItem(item);
@@ -271,19 +271,22 @@ async function handleSaveAddQuestion(event) {
   await renderDashboard();
 }
 
-async function openEditQuestionModal() {
-  const items = await getItemsByListId(selectedListId);
+async function openEditItemModal() {
+  const [items, mediaEntries] = await Promise.all([
+    getItemsByListId(selectedListId),
+    LockBrowserStorage.getMediaEntries()
+  ]);
   const item = items.find((entry) => entry.id === editingItemId);
   if (!item) {
     return;
   }
 
-  fillFormFromItem("edit", item);
+  fillFormFromItem("edit", item, createMediaMap(mediaEntries));
   editReadingTouched = false;
   openModal("edit-question-modal");
 }
 
-async function handleSaveEditQuestion(event) {
+async function handleSaveEditItem(event) {
   event.preventDefault();
   const item = buildItemFromForm("edit", selectedListId, editingItemId);
   await saveItem(item);
@@ -553,24 +556,47 @@ function getEditorValue(editor, fieldName) {
   ).trim();
 }
 
-function fillFormFromItem(prefix, item) {
+function fillFormFromItem(prefix, item, mediaById = new Map()) {
   setValue(`${prefix}-question-prompt`, partsToPlainText(item.fields?.front));
-  setValue(`${prefix}-question-front-image`, getPartSrc(item.fields?.front, "image"));
-  setValue(`${prefix}-question-front-audio`, getPartSrc(item.fields?.front, "audio"));
+  setValue(`${prefix}-question-front-image`, getPartSource(item.fields?.front, "image", mediaById));
+  setValue(`${prefix}-question-front-audio`, getPartSource(item.fields?.front, "audio", mediaById));
   setValue(`${prefix}-question-display-answer`, partsToPlainText(item.fields?.back));
-  setValue(`${prefix}-question-back-image`, getPartSrc(item.fields?.back, "image"));
-  setValue(`${prefix}-question-back-audio`, getPartSrc(item.fields?.back, "audio"));
+  setValue(`${prefix}-question-back-image`, getPartSource(item.fields?.back, "image", mediaById));
+  setValue(`${prefix}-question-back-audio`, getPartSource(item.fields?.back, "audio", mediaById));
   setValue(`${prefix}-question-answer-reading`, partsToPlainText(item.fields?.reading));
   setValue(`${prefix}-question-explanation`, partsToPlainText(item.fields?.explanation));
-  setValue(`${prefix}-question-explanation-image`, getPartSrc(item.fields?.explanation, "image"));
-  setValue(`${prefix}-question-explanation-audio`, getPartSrc(item.fields?.explanation, "audio"));
+  setValue(
+    `${prefix}-question-explanation-image`,
+    getPartSource(item.fields?.explanation, "image", mediaById)
+  );
+  setValue(
+    `${prefix}-question-explanation-audio`,
+    getPartSource(item.fields?.explanation, "audio", mediaById)
+  );
   setValue(`${prefix}-question-tags`, Array.isArray(item.tags) ? item.tags.join(", ") : "");
   initializeCardDrafts(prefix, item.cards || []);
 }
 
-function getPartSrc(parts, type) {
+function getPartSource(parts, type, mediaById) {
   const found = (Array.isArray(parts) ? parts : []).find((part) => part?.type === type);
+  if (!found) {
+    return "";
+  }
+
+  if (found.mediaId && mediaById.has(found.mediaId)) {
+    const media = mediaById.get(found.mediaId);
+    return media.sourceType === "dataUrl" ? media.data || "" : media.url || "";
+  }
+
   return found?.src || "";
+}
+
+function createMediaMap(mediaEntries) {
+  return new Map(
+    (Array.isArray(mediaEntries) ? mediaEntries : [])
+      .filter((media) => media && typeof media.id === "string")
+      .map((media) => [media.id, media])
+  );
 }
 
 function getValue(id) {
@@ -799,11 +825,11 @@ document.getElementById("edit-question-card-button")?.addEventListener("click", 
 });
 
 document.getElementById("add-question-form")?.addEventListener("submit", (event) => {
-  void handleSaveAddQuestion(event);
+  void handleSaveAddItem(event);
 });
 
 document.getElementById("edit-question-form")?.addEventListener("submit", (event) => {
-  void handleSaveEditQuestion(event);
+  void handleSaveEditItem(event);
 });
 
 document.getElementById("back-to-list")?.addEventListener("click", () => {

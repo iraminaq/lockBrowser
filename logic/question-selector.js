@@ -1,22 +1,22 @@
 (function () {
   const DAY_MS = 24 * 60 * 60 * 1000;
 
-  function selectNextQuestion(input) {
+  function selectNextCard(input) {
     const {
-      questionLists,
+      listSummaries,
       enabledListIds,
       resolvedCards,
       progressByKey,
       settings,
       consecutiveUnseenCount,
       recentListIds,
-      excludedQuestionKeys,
+      excludedCardKeys,
       now
     } = input;
 
     const enabledSet = new Set(enabledListIds);
-    const excludedSet = new Set(Array.isArray(excludedQuestionKeys) ? excludedQuestionKeys : []);
-    const listById = new Map(questionLists.map((list) => [list.id, list]));
+    const excludedSet = new Set(Array.isArray(excludedCardKeys) ? excludedCardKeys : []);
+    const listById = new Map(listSummaries.map((list) => [list.id, list]));
     const due = [];
     const upcoming = [];
     const unseen = [];
@@ -96,17 +96,17 @@
     };
   }
 
-  function countSelectableQuestions(input) {
+  function countSelectableCards(input) {
     const {
-      questionLists,
+      listSummaries,
       enabledListIds,
       resolvedCards,
-      excludedQuestionKeys
+      excludedCardKeys
     } = input;
 
     const enabledSet = new Set(enabledListIds);
-    const excludedSet = new Set(Array.isArray(excludedQuestionKeys) ? excludedQuestionKeys : []);
-    const listById = new Map(questionLists.map((list) => [list.id, list]));
+    const excludedSet = new Set(Array.isArray(excludedCardKeys) ? excludedCardKeys : []);
+    const listById = new Map(listSummaries.map((list) => [list.id, list]));
 
     return resolvedCards.filter((resolvedCard) => {
       const list = listById.get(resolvedCard.listId);
@@ -169,7 +169,10 @@
   }
 
   globalThis.LockBrowserQuestionSelector = {
-    selectNextQuestion,
-    countSelectableQuestions
+    selectNextCard,
+    countSelectableCards,
+    // Legacy aliases kept while callers finish migrating to card-based names.
+    selectNextQuestion: selectNextCard,
+    countSelectableQuestions: countSelectableCards
   };
 })();

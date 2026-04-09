@@ -38,7 +38,8 @@ async function renderSettingsPage() {
   isRenderingSettings = true;
   const settings = await LockBrowserStorage.getSettings();
   const lockInterval = splitMsToMinutesSeconds(settings.lockIntervalMs);
-  const incorrectRetryDelay = splitMsToMinutesSeconds(settings.incorrectRetryDelayMs);
+  const incorrectPenalty = splitMsToMinutesSeconds(settings.incorrectPenaltyMs);
+  const incorrectReviewDelay = splitMsToMinutesSeconds(settings.incorrectReviewDelayMs);
   excludedSites = [...settings.excludedSites];
 
   document.getElementById("lock-interval-minutes").value = String(lockInterval.minutes);
@@ -49,11 +50,13 @@ async function renderSettingsPage() {
   document.getElementById("max-consecutive-unseen").value = String(settings.maxConsecutiveUnseen);
   document.getElementById("same-list-bias-limit").value = String(settings.sameListBiasLimit);
   document.getElementById("answer-input-mode").value = settings.answerInputMode;
-  document.getElementById("incorrect-retry-delay-minutes").value = String(
-    incorrectRetryDelay.minutes
+  document.getElementById("incorrect-penalty-minutes").value = String(incorrectPenalty.minutes);
+  document.getElementById("incorrect-penalty-seconds").value = String(incorrectPenalty.seconds);
+  document.getElementById("incorrect-review-delay-minutes").value = String(
+    incorrectReviewDelay.minutes
   );
-  document.getElementById("incorrect-retry-delay-seconds").value = String(
-    incorrectRetryDelay.seconds
+  document.getElementById("incorrect-review-delay-seconds").value = String(
+    incorrectReviewDelay.seconds
   );
   renderExcludedSites();
   isRenderingSettings = false;
@@ -72,10 +75,16 @@ async function saveSettingsNow() {
     maxConsecutiveUnseen: document.getElementById("max-consecutive-unseen").value,
     sameListBiasLimit: document.getElementById("same-list-bias-limit").value,
     answerInputMode: document.getElementById("answer-input-mode").value,
-    incorrectRetryDelayMs: buildMsFromMinutesSeconds(
-      document.getElementById("incorrect-retry-delay-minutes").value,
-      document.getElementById("incorrect-retry-delay-seconds").value,
-      LockBrowserStorage.DEFAULT_SETTINGS.incorrectRetryDelayMs,
+    incorrectPenaltyMs: buildMsFromMinutesSeconds(
+      document.getElementById("incorrect-penalty-minutes").value,
+      document.getElementById("incorrect-penalty-seconds").value,
+      LockBrowserStorage.DEFAULT_SETTINGS.incorrectPenaltyMs,
+      0
+    ),
+    incorrectReviewDelayMs: buildMsFromMinutesSeconds(
+      document.getElementById("incorrect-review-delay-minutes").value,
+      document.getElementById("incorrect-review-delay-seconds").value,
+      LockBrowserStorage.DEFAULT_SETTINGS.incorrectReviewDelayMs,
       0
     ),
     excludedSites
@@ -90,7 +99,8 @@ async function saveSettingsNow() {
   }
 
   const lockInterval = splitMsToMinutesSeconds(nextSettings.lockIntervalMs);
-  const incorrectRetryDelay = splitMsToMinutesSeconds(nextSettings.incorrectRetryDelayMs);
+  const incorrectPenalty = splitMsToMinutesSeconds(nextSettings.incorrectPenaltyMs);
+  const incorrectReviewDelay = splitMsToMinutesSeconds(nextSettings.incorrectReviewDelayMs);
 
   document.getElementById("lock-interval-minutes").value = String(lockInterval.minutes);
   document.getElementById("lock-interval-seconds").value = String(lockInterval.seconds);
@@ -100,11 +110,13 @@ async function saveSettingsNow() {
   document.getElementById("max-consecutive-unseen").value = String(nextSettings.maxConsecutiveUnseen);
   document.getElementById("same-list-bias-limit").value = String(nextSettings.sameListBiasLimit);
   document.getElementById("answer-input-mode").value = nextSettings.answerInputMode;
-  document.getElementById("incorrect-retry-delay-minutes").value = String(
-    incorrectRetryDelay.minutes
+  document.getElementById("incorrect-penalty-minutes").value = String(incorrectPenalty.minutes);
+  document.getElementById("incorrect-penalty-seconds").value = String(incorrectPenalty.seconds);
+  document.getElementById("incorrect-review-delay-minutes").value = String(
+    incorrectReviewDelay.minutes
   );
-  document.getElementById("incorrect-retry-delay-seconds").value = String(
-    incorrectRetryDelay.seconds
+  document.getElementById("incorrect-review-delay-seconds").value = String(
+    incorrectReviewDelay.seconds
   );
   excludedSites = [...nextSettings.excludedSites];
   renderExcludedSites();
@@ -139,11 +151,17 @@ function normalizeSettingsPatch(patch) {
       limits.minQuestionsPerLock,
       limits.maxQuestionsPerLock
     ),
-    incorrectRetryDelayMs: normalizeIntegerInput(
-      patch.incorrectRetryDelayMs,
-      LockBrowserStorage.DEFAULT_SETTINGS.incorrectRetryDelayMs,
-      limits.minIncorrectRetryDelayMs,
-      limits.maxIncorrectRetryDelayMs
+    incorrectPenaltyMs: normalizeIntegerInput(
+      patch.incorrectPenaltyMs,
+      LockBrowserStorage.DEFAULT_SETTINGS.incorrectPenaltyMs,
+      limits.minIncorrectPenaltyMs,
+      limits.maxIncorrectPenaltyMs
+    ),
+    incorrectReviewDelayMs: normalizeIntegerInput(
+      patch.incorrectReviewDelayMs,
+      LockBrowserStorage.DEFAULT_SETTINGS.incorrectReviewDelayMs,
+      limits.minIncorrectReviewDelayMs,
+      limits.maxIncorrectReviewDelayMs
     ),
     answerInputMode: patch.answerInputMode === "keyboard" ? "keyboard" : "candidate",
     autoStartLockOnBrowserOpen: Boolean(patch.autoStartLockOnBrowserOpen),
@@ -267,8 +285,10 @@ document.getElementById("excluded-site-input")?.addEventListener("keydown", (eve
   "questions-per-lock",
   "max-consecutive-unseen",
   "same-list-bias-limit",
-  "incorrect-retry-delay-minutes",
-  "incorrect-retry-delay-seconds"
+  "incorrect-penalty-minutes",
+  "incorrect-penalty-seconds",
+  "incorrect-review-delay-minutes",
+  "incorrect-review-delay-seconds"
 ].forEach((id) => {
   document.getElementById(id)?.addEventListener("input", () => {
     scheduleSettingsSave();
