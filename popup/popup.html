@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
@@ -8,23 +8,28 @@
   </head>
   <body>
     <main class="popup">
-      <p class="eyebrow">LockBrowser</p>
-      <h1>クイック操作</h1>
-
-      <section class="panel">
+      <p class="eyebrow">lockBrowser</p>
+      <div class="status-row">
         <p id="lock-status" class="status-text">状態を読み込み中…</p>
-        <p id="next-lock" class="subtext"></p>
-      </section>
+        <span id="state-pill" class="state-pill">確認中</span>
+      </div>
+      <p id="next-lock" class="countdown-text"></p>
 
-      <div class="actions">
-        <button id="pause-button" class="primary-button" type="button">一時停止</button>
-        <button id="open-dashboard" class="secondary-button" type="button">問題画面を開く</button>
-        <button id="open-settings" class="secondary-button" type="button">設定画面を開く</button>
+      <button id="pause-button" class="primary-button" type="button">一時停止</button>
+
+      <div class="link-actions">
+        <button id="open-dashboard" class="secondary-button" type="button">問題管理</button>
+        <button id="open-settings" class="secondary-button" type="button">設定</button>
       </div>
     </main>
 
     <script src="../data/default-data.js"></script>
+    <script src="../logic/schema.js"></script>
+    <script src="../logic/resolved-card.js"></script>
     <script src="../storage/storage.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>
+
+
+

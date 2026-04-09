@@ -56,7 +56,7 @@
       nextLevel = 1;
     }
 
-    // Incorrect answers come back after three lock intervals.
+    // Incorrect answers come back after the configured retry delay.
     return {
       level: nextLevel,
       isUnseen: false,

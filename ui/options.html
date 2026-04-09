@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
@@ -12,43 +12,114 @@
         <p class="eyebrow">LockBrowser</p>
         <h1>設定</h1>
         <p class="lead">
-          ロック間隔と出題バランスの基本設定を調整します。細かい学習アルゴリズム設定は今後ここに追加していきます。
+          ロックのタイミングや出題のされ方を調整できます。学習アルゴリズムの細かい設定は今後ここに追加していく予定です。
         </p>
       </header>
 
-      <section class="card">
-        <h2>基本設定</h2>
-        <form id="settings-form" class="settings-form">
-          <label class="field">
-            <span>ロック間隔</span>
-            <select id="lock-interval-ms">
-              <option value="5000">5秒</option>
-              <option value="30000">30秒</option>
-              <option value="60000">1分</option>
-              <option value="300000">5分</option>
-            </select>
-          </label>
+      <form id="settings-form" class="settings-form">
+        <section class="card">
+          <h2>ロック</h2>
 
-          <label class="field">
-            <span>初見連続制限</span>
-            <input id="max-consecutive-unseen" type="number" min="1" max="10" />
-          </label>
+          <div class="field-group">
+            <label class="field">
+              <span>ロックまでの時間</span>
+              <div class="time-inputs">
+                <input id="lock-interval-minutes" type="number" min="0" inputmode="numeric" />
+                <span class="time-suffix">分</span>
+                <input id="lock-interval-seconds" type="number" min="0" max="59" inputmode="numeric" />
+                <span class="time-suffix">秒</span>
+              </div>
+            </label>
 
-          <label class="field">
-            <span>同一リスト連続上限</span>
-            <input id="same-list-bias-limit" type="number" min="1" max="10" />
-          </label>
+            <label class="field">
+              <span>1回ロックされたときに何問出すかを設定します</span>
+              <input id="questions-per-lock" type="number" min="1" inputmode="numeric" />
+            </label>
 
-          <div class="form-actions">
-            <button type="submit" class="primary-button">保存</button>
-            <p id="save-status" class="save-status"></p>
+            <label class="toggle-field">
+              <span>ブラウザを起動したときに自動でロック機能をオンにする</span>
+              <input id="auto-start-lock-on-browser-open" type="checkbox" />
+            </label>
           </div>
-        </form>
-      </section>
+        </section>
+
+        <section class="card">
+          <h2>出題</h2>
+
+          <div class="field-group">
+            <label class="field">
+              <span>初めて出る問題を何問まで続けて出すかを設定します</span>
+              <input id="max-consecutive-unseen" type="number" min="1" inputmode="numeric" />
+            </label>
+
+            <label class="field">
+              <span>同じ問題リストの問題が何問まで続けて出るかを設定します</span>
+              <input id="same-list-bias-limit" type="number" min="1" inputmode="numeric" />
+            </label>
+
+            <label class="field">
+              <span>問題の答え方</span>
+              <select id="answer-input-mode">
+                <option value="candidate">候補文字</option>
+                <option value="keyboard">キーボード入力</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>再挑戦</h2>
+
+          <div class="field-group">
+            <label class="field">
+              <span>不正解ペナルティ時間</span>
+              <small>間違えたあと、再度答えられるようになるまでの待ち時間です。</small>
+              <div class="time-inputs">
+                <input id="incorrect-retry-delay-minutes" type="number" min="0" inputmode="numeric" />
+                <span class="time-suffix">分</span>
+                <input id="incorrect-retry-delay-seconds" type="number" min="0" max="59" inputmode="numeric" />
+                <span class="time-suffix">秒</span>
+              </div>
+            </label>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>ロックしないサイト</h2>
+
+          <div class="field-group">
+            <label class="field">
+              <span>登録したサイトではロックを表示しません。</span>
+              <small>youtube.com のようにドメインで指定できます。URL を貼った場合もドメイン部分だけを使います。</small>
+              <div class="inline-inputs">
+                <input
+                  id="excluded-site-input"
+                  type="text"
+                  placeholder="例: youtube.com"
+                  autocomplete="off"
+                />
+                <button id="add-excluded-site-button" class="primary-button" type="button">
+                  追加
+                </button>
+              </div>
+            </label>
+            <div id="excluded-sites-list" class="site-chip-list"></div>
+          </div>
+        </section>
+
+        <div class="form-actions">
+          <p id="save-status" class="save-status" aria-live="polite"></p>
+        </div>
+      </form>
     </main>
 
     <script src="../data/default-data.js"></script>
+    <script src="../logic/schema.js"></script>
+    <script src="../logic/resolved-card.js"></script>
     <script src="../storage/storage.js"></script>
     <script src="options.js"></script>
   </body>
 </html>
+
+
+

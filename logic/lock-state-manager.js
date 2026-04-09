@@ -1,24 +1,32 @@
 (function () {
   const LOCK_STATE_KEY = "lockState";
+  const DEFAULT_LOCK_STATE = {
+    isLocked: true,
+    isPaused: false,
+    pausedAt: null,
+    unlockUntil: null
+  };
 
   async function getLockState() {
     const stored = await chrome.storage.local.get(LOCK_STATE_KEY);
-    const state = stored[LOCK_STATE_KEY];
+    const state = {
+      ...DEFAULT_LOCK_STATE,
+      ...(stored[LOCK_STATE_KEY] || {})
+    };
 
-    if (!state) {
-      const initialState = {
-        isLocked: true,
-        unlockUntil: null
-      };
+    if (!stored[LOCK_STATE_KEY]) {
+      await setLockState(state);
+      return state;
+    }
 
-      await setLockState(initialState);
-      return initialState;
+    if (state.isPaused) {
+      return state;
     }
 
     if (!state.isLocked && state.unlockUntil && state.unlockUntil <= Date.now()) {
       const relockedState = {
-        isLocked: true,
-        unlockUntil: null
+        ...DEFAULT_LOCK_STATE,
+        isLocked: true
       };
 
       await setLockState(relockedState);
@@ -30,14 +38,19 @@
 
   async function setLockState(state) {
     await chrome.storage.local.set({
-      [LOCK_STATE_KEY]: state
+      [LOCK_STATE_KEY]: {
+        ...DEFAULT_LOCK_STATE,
+        ...(state || {})
+      }
     });
   }
 
   async function unlockForDuration(durationMs, onChanged) {
     const unlockUntil = Date.now() + durationMs;
     const nextState = {
+      ...DEFAULT_LOCK_STATE,
       isLocked: false,
+      isPaused: false,
       unlockUntil
     };
 
@@ -50,15 +63,15 @@
   async function syncAlarmWithState(alarmName, onRelock) {
     const state = await getLockState();
 
-    if (state.isLocked || !state.unlockUntil) {
+    if (state.isPaused || state.isLocked || !state.unlockUntil) {
       await chrome.alarms.clear(alarmName);
       return;
     }
 
     if (state.unlockUntil <= Date.now()) {
       const relockedState = {
-        isLocked: true,
-        unlockUntil: null
+        ...DEFAULT_LOCK_STATE,
+        isLocked: true
       };
 
       await setLockState(relockedState);
@@ -73,6 +86,7 @@
   }
 
   globalThis.LockBrowserLockState = {
+    DEFAULT_LOCK_STATE,
     getLockState,
     setLockState,
     unlockForDuration,

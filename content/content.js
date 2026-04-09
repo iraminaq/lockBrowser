@@ -1,34 +1,36 @@
 const OVERLAY_ID = "study-gate-lock-overlay";
 const LOCK_STATE_KEY = "lockState";
-const PENALTY_DURATION_SECONDS = 10;
-const DUMMY_CHAR_POOL = [
-  "\u3042", "\u3044", "\u3046", "\u3048", "\u304a",
-  "\u304b", "\u304d", "\u304f", "\u3051", "\u3053",
-  "\u3055", "\u3057", "\u3059", "\u305b", "\u305d",
-  "\u305f", "\u3061", "\u3064", "\u3066", "\u3068",
-  "\u306a", "\u306b", "\u306c", "\u306d", "\u306e",
-  "\u306f", "\u3072", "\u3075", "\u3078", "\u307b",
-  "\u307e", "\u307f", "\u3080", "\u3081", "\u3082",
-  "\u3084", "\u3086", "\u3088", "\u3089", "\u308b",
-  "\u308c", "\u308d", "\u308f", "\u3092", "\u3093"
-];
+const SETTINGS_KEY = "settings";
+
+const HIRAGANA_CHAR_POOL =
+  "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん".split("");
+const KATAKANA_CHAR_POOL =
+  "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン".split("");
+const LOWER_ALPHA_CHAR_POOL = "abcdefghijklmnopqrstuvwxyz".split("");
+const UPPER_ALPHA_CHAR_POOL = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const DIGIT_CHAR_POOL = "0123456789".split("");
 
 let overlayElement = null;
+let titleElement = null;
 let questionPromptElement = null;
+let explanationElement = null;
 let answerDisplayElement = null;
-let choicesContainerElement = null;
+let answerInputAreaElement = null;
 let feedbackElement = null;
 let answerRevealElement = null;
 let resetButtonElement = null;
 let actionButtonElement = null;
+let keyboardInputElement = null;
+
 let currentQuestion = null;
 let currentQuestionKey = null;
 let currentInput = "";
-let isSubmittingAnswer = false;
+let currentAnswerInputMode = "candidate";
 let currentChoices = [];
-let penaltyCountdownSeconds = 0;
+let currentPenaltySeconds = 0;
 let penaltyTimerId = null;
-let resultState = "playing";
+let isSubmittingAnswer = false;
+let resultState = "answering";
 
 initialize();
 
@@ -37,13 +39,13 @@ chrome.runtime.onMessage.addListener((message) => {
     return;
   }
 
-  applyLockState(message.state);
+  void applyLockStateAsync(message.state);
 });
 
 async function initialize() {
   try {
     const state = await getInitialLockState();
-    applyLockState(state);
+    await applyLockStateAsync(state);
   } catch (error) {
     console.error("Failed to initialize lock overlay:", error);
   }
@@ -75,35 +77,35 @@ function ensureOverlay() {
     return overlayElement;
   }
 
-  overlayElement = document.getElementById(OVERLAY_ID);
-  if (overlayElement) {
+  const existing = document.getElementById(OVERLAY_ID);
+  if (existing) {
+    overlayElement = existing;
     return overlayElement;
   }
 
   const overlay = document.createElement("div");
   overlay.id = OVERLAY_ID;
-  overlay.setAttribute("data-locked", "true");
+  overlay.hidden = true;
 
   const panel = document.createElement("div");
   panel.className = "study-gate-panel";
 
   const title = document.createElement("h1");
   title.className = "study-gate-title";
-  title.textContent = "\u30ed\u30c3\u30af\u4e2d";
+  title.textContent = "ロック中";
 
-  const description = document.createElement("p");
-  description.className = "study-gate-description";
-  description.textContent =
-    "\u6587\u5b57\u30921\u3064\u305a\u3064\u9078\u3093\u3067\u3001\u7b54\u3048\u3092\u5b8c\u6210\u3055\u305b\u3066\u304f\u3060\u3055\u3044\u3002";
+  const prompt = document.createElement("div");
+  prompt.className = "study-gate-question";
 
-  const questionPrompt = document.createElement("p");
-  questionPrompt.className = "study-gate-question";
+  const explanation = document.createElement("div");
+  explanation.className = "study-gate-description";
+  explanation.hidden = true;
 
   const answerDisplay = document.createElement("div");
   answerDisplay.className = "study-gate-answer-display";
 
-  const choices = document.createElement("div");
-  choices.className = "study-gate-choices";
+  const inputArea = document.createElement("div");
+  inputArea.className = "study-gate-input-area";
 
   const feedback = document.createElement("p");
   feedback.className = "study-gate-feedback";
@@ -116,33 +118,27 @@ function ensureOverlay() {
   const resetButton = document.createElement("button");
   resetButton.className = "study-gate-reset-button";
   resetButton.type = "button";
-  resetButton.textContent = "\u3082\u3046\u4e00\u5ea6";
   resetButton.hidden = true;
-  resetButton.addEventListener("click", resetQuizProgress);
+  resetButton.textContent = "再挑戦";
+  resetButton.addEventListener("click", () => {
+    resetQuizProgress();
+  });
 
   const actionButton = document.createElement("button");
   actionButton.className = "study-gate-action-button";
   actionButton.type = "button";
-  actionButton.textContent = "\u30ed\u30c3\u30af\u3092\u89e3\u9664";
   actionButton.hidden = true;
+  actionButton.textContent = "ロックを解除";
   actionButton.addEventListener("click", () => {
     void handleUnlockButtonClick();
   });
 
-  questionPromptElement = questionPrompt;
-  answerDisplayElement = answerDisplay;
-  choicesContainerElement = choices;
-  feedbackElement = feedback;
-  answerRevealElement = answerReveal;
-  resetButtonElement = resetButton;
-  actionButtonElement = actionButton;
-
   panel.append(
     title,
-    description,
-    questionPrompt,
+    prompt,
+    explanation,
     answerDisplay,
-    choices,
+    inputArea,
     feedback,
     answerReveal,
     resetButton,
@@ -156,12 +152,23 @@ function ensureOverlay() {
   }
 
   overlayElement = overlay;
+  titleElement = title;
+  questionPromptElement = prompt;
+  explanationElement = explanation;
+  answerDisplayElement = answerDisplay;
+  answerInputAreaElement = inputArea;
+  feedbackElement = feedback;
+  answerRevealElement = answerReveal;
+  resetButtonElement = resetButton;
+  actionButtonElement = actionButton;
+  keyboardInputElement = null;
+
   return overlayElement;
 }
 
-function applyLockState(state) {
+async function applyLockStateAsync(state) {
   if (state?.isLocked) {
-    void showOverlay();
+    await showOverlay();
     return;
   }
 
@@ -169,8 +176,14 @@ function applyLockState(state) {
 }
 
 async function showOverlay() {
+  if (await isCurrentPageExcluded()) {
+    hideOverlay();
+    return;
+  }
+
   const overlay = ensureOverlay();
   attachOverlayIfNeeded(overlay);
+
   const previousQuestionKey = currentQuestionKey;
   const nextQuestion = await loadCurrentQuestion();
 
@@ -182,8 +195,7 @@ async function showOverlay() {
     renderQuestion();
   }
 
-  overlayElement.hidden = false;
-  overlayElement.setAttribute("data-locked", "true");
+  overlay.hidden = false;
 }
 
 function hideOverlay() {
@@ -193,12 +205,15 @@ function hideOverlay() {
 
   clearPenaltyCountdown();
   overlayElement.hidden = true;
-  overlayElement.setAttribute("data-locked", "false");
-  setFeedback("");
-  setAnswerReveal("");
   currentQuestion = null;
   currentQuestionKey = null;
+  currentInput = "";
+  currentChoices = [];
+  currentPenaltySeconds = 0;
   isSubmittingAnswer = false;
+  resultState = "answering";
+  setFeedback("");
+  setAnswerReveal("");
 }
 
 function attachOverlayIfNeeded(overlay) {
@@ -220,15 +235,42 @@ async function loadCurrentQuestion() {
 
   currentQuestion = response.question || null;
   currentQuestionKey = currentQuestion ? getQuestionKey(currentQuestion) : null;
+  currentAnswerInputMode = currentQuestion?.inputMode || response.answerInputMode || "keyboard";
+
   return currentQuestion;
+}
+
+async function isCurrentPageExcluded() {
+  const hostname = getCurrentHostname();
+  if (!hostname) {
+    return false;
+  }
+
+  const stored = await chrome.storage.local.get(SETTINGS_KEY);
+  const settings = stored[SETTINGS_KEY] || {};
+  const excludedSites = Array.isArray(settings.excludedSites) ? settings.excludedSites : [];
+
+  return excludedSites.some((rule) => {
+    const normalizedRule = String(rule || "").trim().toLowerCase();
+    return normalizedRule && (hostname === normalizedRule || hostname.endsWith(`.${normalizedRule}`));
+  });
+}
+
+function getCurrentHostname() {
+  try {
+    return window.location.hostname.toLowerCase();
+  } catch (error) {
+    return "";
+  }
 }
 
 function resetQuizProgress() {
   clearPenaltyCountdown();
   currentInput = "";
   currentChoices = createChoicesForCurrentStep();
+  currentPenaltySeconds = 0;
   isSubmittingAnswer = false;
-  resultState = "playing";
+  resultState = "answering";
   setFeedback("");
   setAnswerReveal("");
 
@@ -240,6 +282,7 @@ function resetQuizProgress() {
   if (actionButtonElement) {
     actionButtonElement.hidden = true;
     actionButtonElement.disabled = false;
+    actionButtonElement.textContent = "ロックを解除";
   }
 
   renderQuestion();
@@ -249,97 +292,353 @@ function showEmptyState() {
   clearPenaltyCountdown();
   currentInput = "";
   currentChoices = [];
-  isSubmittingAnswer = false;
+  currentPenaltySeconds = 0;
   resultState = "empty";
+  isSubmittingAnswer = false;
 
-  if (questionPromptElement) {
-    questionPromptElement.textContent = "出題対象の問題がありません。";
+  if (titleElement) {
+    titleElement.textContent = "ロック中";
   }
 
+  renderParts(questionPromptElement, [
+    { type: "text", value: "出題できる問題がありません。" }
+  ]);
+  renderParts(explanationElement, []);
+
   if (answerDisplayElement) {
-    answerDisplayElement.textContent = "問題リストを有効化してください";
+    answerDisplayElement.textContent = "";
     answerDisplayElement.dataset.completed = "false";
     answerDisplayElement.dataset.locked = "true";
   }
 
-  if (choicesContainerElement) {
-    choicesContainerElement.replaceChildren();
-    choicesContainerElement.hidden = true;
+  if (answerInputAreaElement) {
+    answerInputAreaElement.replaceChildren();
+    answerInputAreaElement.hidden = true;
   }
 
-  setFeedback("有効な問題リスト、または出題対象の問題がありません。");
+  setFeedback("問題リストやカード設定を確認してください。", "error");
   setAnswerReveal("");
 
   if (resetButtonElement) {
     resetButtonElement.hidden = true;
-    resetButtonElement.disabled = true;
   }
 
   if (actionButtonElement) {
-    actionButtonElement.hidden = true;
-    actionButtonElement.disabled = true;
+    actionButtonElement.hidden = false;
+    actionButtonElement.disabled = false;
+    actionButtonElement.textContent = "ロックを解除";
   }
 }
 
 function renderQuestion() {
-  if (
-    !currentQuestion ||
-    !questionPromptElement ||
-    !answerDisplayElement ||
-    !choicesContainerElement
-  ) {
+  if (!currentQuestion || !questionPromptElement || !answerDisplayElement) {
     return;
   }
 
-  questionPromptElement.textContent = currentQuestion.prompt;
-  answerDisplayElement.textContent = currentInput || "\u30fb";
+  if (titleElement) {
+    titleElement.textContent = "ロック中";
+  }
+
+  renderParts(questionPromptElement, currentQuestion.promptParts || []);
+  renderParts(explanationElement, currentQuestion.explanationParts || []);
+
+  answerDisplayElement.textContent = currentInput;
   answerDisplayElement.dataset.completed = String(resultState === "success");
   answerDisplayElement.dataset.locked = String(isInputLocked());
 
-  choicesContainerElement.replaceChildren();
-
-  if (resultState === "playing") {
-    currentChoices.forEach((choice) => {
-      const button = document.createElement("button");
-      button.className = "study-gate-choice-button";
-      button.type = "button";
-      button.textContent = choice;
-      button.disabled = isInputLocked();
-      button.addEventListener("click", () => {
-        void handleCharacterClick(choice);
-      });
-
-      choicesContainerElement.append(button);
-    });
-  }
-
-  choicesContainerElement.hidden = resultState !== "playing";
+  renderAnswerInputArea();
 
   if (resetButtonElement) {
-    resetButtonElement.disabled = isInputLocked();
+    resetButtonElement.hidden = resultState !== "retry-ready";
+    resetButtonElement.disabled = isSubmittingAnswer;
   }
 }
 
+function renderParts(container, parts) {
+  if (!container) {
+    return;
+  }
+
+  container.replaceChildren();
+  const safeParts = Array.isArray(parts) ? parts : [];
+
+  safeParts.forEach((part) => {
+    const node = renderPart(part);
+    if (node) {
+      container.append(node);
+    }
+  });
+
+  container.hidden = safeParts.length === 0;
+}
+
+function renderPart(part) {
+  if (!part || typeof part !== "object") {
+    return null;
+  }
+
+  if (part.type === "text") {
+    return renderTextPart(part);
+  }
+
+  if (part.type === "image") {
+    return renderImagePart(part);
+  }
+
+  if (part.type === "audio") {
+    return renderAudioPart(part);
+  }
+
+  return null;
+}
+
+function renderTextPart(part) {
+  const span = document.createElement("span");
+  span.textContent = String(part.value || "");
+  return span;
+}
+
+function renderImagePart(part) {
+  const src = String(part.src || "").trim();
+  if (!src) {
+    return null;
+  }
+
+  const image = document.createElement("img");
+  image.src = src;
+  image.alt = "";
+  image.style.maxWidth = "100%";
+  image.style.borderRadius = "12px";
+  image.style.marginTop = "8px";
+  return image;
+}
+
+function renderAudioPart(part) {
+  const src = String(part.src || "").trim();
+  if (!src) {
+    return null;
+  }
+
+  const audio = document.createElement("audio");
+  audio.controls = true;
+  audio.src = src;
+  audio.style.width = "100%";
+  audio.style.marginTop = "8px";
+  return audio;
+}
+
+function renderAnswerInputArea() {
+  if (!answerInputAreaElement) {
+    return;
+  }
+
+  answerInputAreaElement.replaceChildren();
+  keyboardInputElement = null;
+
+  if (resultState !== "answering") {
+    answerInputAreaElement.hidden = true;
+    return;
+  }
+
+  answerInputAreaElement.hidden = false;
+
+  if (getEffectiveInputMode() === "keyboard") {
+    renderKeyboardControls();
+  } else if (getEffectiveInputMode() === "multiple-choice") {
+    renderMultipleChoiceControls();
+  } else {
+    renderCandidateChoices();
+  }
+}
+
+function renderKeyboardControls() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "study-gate-keyboard";
+
+  const input = document.createElement("input");
+  input.className = "study-gate-keyboard-input";
+  input.type = "text";
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.placeholder = "答えを入力";
+  input.disabled = isInputLocked();
+  input.value = currentInput;
+  input.addEventListener("input", () => {
+    currentInput = input.value;
+    updateAnswerDisplay();
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void handleKeyboardSubmit();
+    }
+  });
+
+  const submitButton = document.createElement("button");
+  submitButton.className = "study-gate-keyboard-submit";
+  submitButton.type = "button";
+  submitButton.textContent = "決定";
+  submitButton.disabled = isInputLocked();
+  submitButton.addEventListener("click", () => {
+    void handleKeyboardSubmit();
+  });
+
+  wrapper.append(input, submitButton);
+  answerInputAreaElement.append(wrapper);
+  keyboardInputElement = input;
+}
+
+function renderCandidateChoices() {
+  const choices = document.createElement("div");
+  choices.className = "study-gate-choices";
+
+  currentChoices.forEach((choice) => {
+    const button = document.createElement("button");
+    button.className = "study-gate-choice-button";
+    button.type = "button";
+    button.textContent = choice;
+    button.disabled = isInputLocked();
+    button.addEventListener("click", () => {
+      void handleCharacterClick(choice);
+    });
+    choices.append(button);
+  });
+
+  answerInputAreaElement.append(choices);
+}
+
+function renderMultipleChoiceControls() {
+  const choices = document.createElement("div");
+  choices.className = "study-gate-choices";
+
+  (currentQuestion?.choices || []).forEach((choice) => {
+    const button = document.createElement("button");
+    button.className = "study-gate-choice-button";
+    button.type = "button";
+    button.disabled = isInputLocked();
+    renderPartsIntoButton(button, choice.parts || []);
+    button.addEventListener("click", () => {
+      void handleChoiceSubmit(choice.id);
+    });
+    choices.append(button);
+  });
+
+  answerInputAreaElement.append(choices);
+}
+
+function renderPartsIntoButton(button, parts) {
+  button.replaceChildren();
+  (Array.isArray(parts) ? parts : []).forEach((part) => {
+    const node = renderPart(part);
+    if (node) {
+      button.append(node);
+    }
+  });
+}
+
+function getEffectiveInputMode() {
+  if (currentAnswerInputMode === "multiple-choice") {
+    return "multiple-choice";
+  }
+
+  if (currentAnswerInputMode === "candidate" && getCanonicalAnswer()) {
+    return "candidate";
+  }
+
+  return "keyboard";
+}
+
 function createChoicesForCurrentStep() {
-  if (!currentQuestion) {
+  if (!currentQuestion || getEffectiveInputMode() !== "candidate") {
     return [];
   }
 
-  const nextChar = currentQuestion.answerReading[currentInput.length];
+  const canonicalAnswer = getCanonicalAnswer();
+  const nextChar = canonicalAnswer[currentInput.length];
   if (!nextChar) {
     return [];
   }
 
   const uniqueChoices = new Set([nextChar]);
+  const dummyCharPool = getDummyCharPool(canonicalAnswer, nextChar);
 
-  while (uniqueChoices.size < 4) {
-    const dummyChar = DUMMY_CHAR_POOL[Math.floor(Math.random() * DUMMY_CHAR_POOL.length)];
-    if (!currentQuestion.answerReading.includes(dummyChar) && !uniqueChoices.has(dummyChar)) {
+  while (uniqueChoices.size < 4 && dummyCharPool.length > 0) {
+    const dummyChar = dummyCharPool[Math.floor(Math.random() * dummyCharPool.length)];
+    if (!canonicalAnswer.includes(dummyChar) && !uniqueChoices.has(dummyChar)) {
       uniqueChoices.add(dummyChar);
     }
   }
 
   return shuffle(Array.from(uniqueChoices));
+}
+
+async function handleChoiceSubmit(choiceId) {
+  if (!currentQuestion || isInputLocked()) {
+    return;
+  }
+
+  currentInput = String(choiceId || "");
+  await submitCurrentAnswer();
+}
+
+function getDummyCharPool(answerText, nextChar) {
+  const kind = detectCharacterKind(answerText, nextChar);
+
+  if (kind === "alpha-lower") {
+    return LOWER_ALPHA_CHAR_POOL;
+  }
+
+  if (kind === "alpha-upper") {
+    return UPPER_ALPHA_CHAR_POOL;
+  }
+
+  if (kind === "alpha-mixed") {
+    return [...LOWER_ALPHA_CHAR_POOL, ...UPPER_ALPHA_CHAR_POOL];
+  }
+
+  if (kind === "digit") {
+    return DIGIT_CHAR_POOL;
+  }
+
+  if (kind === "katakana") {
+    return KATAKANA_CHAR_POOL;
+  }
+
+  return HIRAGANA_CHAR_POOL;
+}
+
+function detectCharacterKind(answerText, nextChar) {
+  const text = String(answerText || "");
+
+  if (/^[A-Z]+$/.test(text)) {
+    return "alpha-upper";
+  }
+
+  if (/^[a-z]+$/.test(text)) {
+    return "alpha-lower";
+  }
+
+  if (/^[A-Za-z]+$/.test(text)) {
+    if (/[A-Z]/.test(nextChar || "")) {
+      return "alpha-upper";
+    }
+
+    if (/[a-z]/.test(nextChar || "")) {
+      return "alpha-lower";
+    }
+
+    return "alpha-mixed";
+  }
+
+  if (/^[0-9]+$/.test(text)) {
+    return "digit";
+  }
+
+  if (/^[ァ-ヶー]+$/.test(text)) {
+    return "katakana";
+  }
+
+  return "hiragana";
 }
 
 function shuffle(items) {
@@ -372,42 +671,62 @@ function setAnswerReveal(message) {
   answerRevealElement.hidden = !message;
 }
 
+function buildAnswerRevealMessage(correctAnswer, correctReading) {
+  if (!correctAnswer) {
+    return "";
+  }
+
+  if (correctReading && correctReading !== correctAnswer) {
+    return `正解: ${correctAnswer} (${correctReading})`;
+  }
+
+  return `正解: ${correctAnswer}`;
+}
+
 function getQuestionKey(question) {
-  return `${question.listId}:${question.id}`;
+  return `${question.listId}:${question.cardId}`;
+}
+
+function getCanonicalAnswer() {
+  const answer = currentQuestion?.answer;
+  if (!answer || answer.type !== "text") {
+    return "";
+  }
+
+  if (Array.isArray(answer.accepted) && answer.accepted.length > 0) {
+    return String(answer.accepted[0] || "");
+  }
+
+  return String(currentQuestion.canonicalAnswer || "");
+}
+
+function getDisplayAnswer() {
+  return String(currentQuestion?.displayAnswer || "");
 }
 
 function isInputLocked() {
-  return isSubmittingAnswer || penaltyCountdownSeconds > 0;
+  return isSubmittingAnswer || resultState !== "answering";
 }
 
-function startPenaltyCountdown() {
+function startPenaltyCountdown(durationSeconds) {
   clearPenaltyCountdown();
-  penaltyCountdownSeconds = PENALTY_DURATION_SECONDS;
+  currentPenaltySeconds = Math.max(1, Math.ceil(Number(durationSeconds) || 1));
+  currentInput = "";
   currentChoices = [];
-  resultState = "penalty";
-
-  if (resetButtonElement) {
-    resetButtonElement.hidden = true;
-  }
-
-  if (actionButtonElement) {
-    actionButtonElement.hidden = true;
-  }
-
-  updatePenaltyFeedback();
+  resultState = "incorrect-feedback";
   renderQuestion();
+  updatePenaltyFeedback();
 
   penaltyTimerId = window.setInterval(() => {
-    penaltyCountdownSeconds -= 1;
+    currentPenaltySeconds -= 1;
 
-    if (penaltyCountdownSeconds <= 0) {
+    if (currentPenaltySeconds <= 0) {
       clearPenaltyCountdown();
-      resetQuizProgress();
+      showRetryReadyState();
       return;
     }
 
     updatePenaltyFeedback();
-    renderQuestion();
   }, 1000);
 }
 
@@ -417,24 +736,26 @@ function clearPenaltyCountdown() {
     penaltyTimerId = null;
   }
 
-  penaltyCountdownSeconds = 0;
+  currentPenaltySeconds = 0;
+}
+
+function showRetryReadyState() {
+  resultState = "retry-ready";
+  currentInput = "";
+  currentChoices = [];
+  renderQuestion();
+  setFeedback("再挑戦できます。", "error");
+
+  if (resetButtonElement) {
+    resetButtonElement.hidden = false;
+    resetButtonElement.disabled = false;
+    resetButtonElement.textContent = "再挑戦";
+  }
 }
 
 function updatePenaltyFeedback() {
-  if (!currentQuestion) {
-    return;
-  }
-
-  const readingDetail =
-    currentQuestion.answerReading !== currentQuestion.displayAnswer
-      ? ` (${currentQuestion.answerReading})`
-      : "";
-
-  setFeedback(
-    `\u4e0d\u6b63\u89e3\u3067\u3059\u3002${penaltyCountdownSeconds}\u79d2\u5f8c\u306b\u518d\u6311\u6226\u3067\u304d\u307e\u3059`,
-    "error"
-  );
-  setAnswerReveal(`\u6b63\u89e3: ${currentQuestion.displayAnswer}${readingDetail}`);
+  setFeedback(`不正解です。再挑戦まで ${currentPenaltySeconds} 秒`, "error");
+  setAnswerReveal(buildAnswerRevealMessage(getDisplayAnswer(), getCanonicalAnswer()));
 }
 
 async function handleCharacterClick(character) {
@@ -442,23 +763,38 @@ async function handleCharacterClick(character) {
     return;
   }
 
+  const canonicalAnswer = getCanonicalAnswer();
   currentInput += character;
-  renderQuestion();
+  updateAnswerDisplay();
 
-  const answerReading = currentQuestion.answerReading;
-  if (!answerReading.startsWith(currentInput)) {
+  if (!canonicalAnswer.startsWith(currentInput)) {
     await handleIncorrectAttempt();
     return;
   }
 
-  if (currentInput === answerReading) {
-    await submitCompletedAnswer();
+  if (currentInput === canonicalAnswer) {
+    await submitCurrentAnswer();
     return;
   }
 
   currentChoices = createChoicesForCurrentStep();
-  setFeedback("");
   renderQuestion();
+}
+
+async function handleKeyboardSubmit() {
+  if (!currentQuestion || isInputLocked()) {
+    return;
+  }
+
+  currentInput = String(keyboardInputElement?.value || "").trim();
+  updateAnswerDisplay();
+
+  if (!currentInput) {
+    setFeedback("答えを入力してください。", "error");
+    return;
+  }
+
+  await submitCurrentAnswer();
 }
 
 async function handleIncorrectAttempt() {
@@ -470,69 +806,90 @@ async function handleIncorrectAttempt() {
     const response = await chrome.runtime.sendMessage({
       type: "REGISTER_INCORRECT_ANSWER",
       listId: currentQuestion.listId,
-      questionId: currentQuestion.id
+      cardId: currentQuestion.cardId
     });
 
     if (!response?.ok) {
       throw new Error("Incorrect answer handling failed.");
     }
 
+    setFeedback(response.feedback || "不正解です。", "error");
+    setAnswerReveal(buildAnswerRevealMessage(response.correctAnswer, response.correctReading));
+
     if (response.shouldStartPenalty) {
-      startPenaltyCountdown();
+      startPenaltyCountdown((response.penaltyDurationMs || 0) / 1000);
       return;
     }
 
+    resultState = "retry-ready";
     currentInput = "";
-    currentChoices = createChoicesForCurrentStep();
-    setFeedback(response.feedback || "不正解です。もう一度試してください。", "error");
-    setAnswerReveal("");
+    currentChoices = [];
     renderQuestion();
+    if (resetButtonElement) {
+      resetButtonElement.hidden = false;
+      resetButtonElement.disabled = false;
+      resetButtonElement.textContent = "再挑戦";
+    }
   } catch (error) {
     console.error("Failed to register incorrect answer:", error);
-    startPenaltyCountdown();
+    setFeedback("不正解の処理に失敗しました。", "error");
   }
 }
 
-async function submitCompletedAnswer() {
+async function submitCurrentAnswer() {
   if (!currentQuestion) {
     return;
   }
 
   isSubmittingAnswer = true;
   renderQuestion();
-  setFeedback("\u6b63\u89e3\u3092\u78ba\u8a8d\u3057\u3066\u3044\u307e\u3059\u2026");
+  setFeedback("正解を確認しています…");
 
   try {
     const response = await chrome.runtime.sendMessage({
       type: "SUBMIT_ANSWER",
       listId: currentQuestion.listId,
-      questionId: currentQuestion.id,
-      answerReading: currentInput
+      cardId: currentQuestion.cardId,
+      answerText: currentInput
     });
 
     if (response?.ok && response.isCorrect) {
-      resultState = "success";
-      currentChoices = [];
-      setFeedback(response.feedback || "\u6b63\u89e3\u3067\u3059\u3002", "success");
-      setAnswerReveal(
-        response.correctReading && response.correctReading !== response.correctAnswer
-          ? `\u6b63\u89e3: ${response.correctAnswer} (${response.correctReading})`
-          : `\u6b63\u89e3: ${response.correctAnswer || currentQuestion.displayAnswer}`
-      );
-      if (actionButtonElement) {
-        actionButtonElement.hidden = false;
+      if (response.shouldUnlock) {
+        resultState = "success";
+        currentChoices = [];
+        renderQuestion();
+        setFeedback(response.feedback || "正解です。", "success");
+        setAnswerReveal(buildAnswerRevealMessage(response.correctAnswer, response.correctReading));
+        if (actionButtonElement) {
+          actionButtonElement.hidden = false;
+          actionButtonElement.disabled = false;
+          actionButtonElement.textContent = "ロックを解除";
+        }
+        return;
       }
-      renderQuestion();
+
+      setFeedback(response.feedback || "正解です。次の問題へ進みます。", "success");
+      setAnswerReveal("");
+      const previousQuestionKey = currentQuestionKey;
+      const nextQuestion = await loadCurrentQuestion();
+
+      if (!nextQuestion) {
+        showEmptyState();
+        return;
+      }
+
+      if (previousQuestionKey !== getQuestionKey(nextQuestion)) {
+        resetQuizProgress();
+      } else {
+        renderQuestion();
+      }
       return;
     }
 
-    startPenaltyCountdown();
+    await handleIncorrectAttempt();
   } catch (error) {
-    console.error("Failed to submit quiz answer:", error);
-    setFeedback(
-      "\u30a8\u30e9\u30fc\u304c\u767a\u751f\u3057\u307e\u3057\u305f\u3002\u3082\u3046\u4e00\u5ea6\u8a66\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-      "error"
-    );
+    console.error("Failed to submit answer:", error);
+    setFeedback("回答の送信に失敗しました。", "error");
   } finally {
     isSubmittingAnswer = false;
     if (overlayElement && !overlayElement.hidden) {
@@ -542,7 +899,7 @@ async function submitCompletedAnswer() {
 }
 
 async function handleUnlockButtonClick() {
-  if (resultState !== "success" || isSubmittingAnswer) {
+  if ((resultState !== "success" && resultState !== "empty") || isSubmittingAnswer) {
     return;
   }
 
@@ -550,28 +907,22 @@ async function handleUnlockButtonClick() {
   if (actionButtonElement) {
     actionButtonElement.disabled = true;
   }
-  setFeedback("\u30ed\u30c3\u30af\u3092\u89e3\u9664\u3057\u3066\u3044\u307e\u3059\u2026", "success");
+  setFeedback("ロックを解除しています…", "success");
 
   try {
     const response = await chrome.runtime.sendMessage({ type: "UNLOCK_REQUEST" });
     if (response?.ok) {
-      applyLockState(response.state);
+      await applyLockStateAsync(response.state);
       return;
     }
 
-    setFeedback(
-      "\u30ed\u30c3\u30af\u89e3\u9664\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002\u3082\u3046\u4e00\u5ea6\u8a66\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-      "error"
-    );
+    setFeedback("ロック解除に失敗しました。", "error");
     if (actionButtonElement) {
       actionButtonElement.disabled = false;
     }
   } catch (error) {
     console.error("Failed to unlock page:", error);
-    setFeedback(
-      "\u30ed\u30c3\u30af\u89e3\u9664\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002\u3082\u3046\u4e00\u5ea6\u8a66\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-      "error"
-    );
+    setFeedback("ロック解除に失敗しました。", "error");
     if (actionButtonElement) {
       actionButtonElement.disabled = false;
     }
@@ -581,4 +932,12 @@ async function handleUnlockButtonClick() {
       renderQuestion();
     }
   }
+}
+
+function updateAnswerDisplay() {
+  if (!answerDisplayElement) {
+    return;
+  }
+
+  answerDisplayElement.textContent = currentInput;
 }

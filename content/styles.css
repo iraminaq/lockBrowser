@@ -80,8 +80,30 @@
   gap: 12px;
 }
 
+#study-gate-lock-overlay .study-gate-keyboard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+#study-gate-lock-overlay .study-gate-keyboard-input {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  padding: 14px 16px;
+  font-size: 18px;
+  line-height: 1.2;
+  color: #111827;
+}
+
+#study-gate-lock-overlay .study-gate-keyboard-input:disabled {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
 #study-gate-lock-overlay .study-gate-choice-button,
-#study-gate-lock-overlay .study-gate-reset-button {
+#study-gate-lock-overlay .study-gate-reset-button,
+#study-gate-lock-overlay .study-gate-keyboard-submit {
   appearance: none;
   border: 0;
   border-radius: 14px;
@@ -107,7 +129,9 @@
 }
 
 #study-gate-lock-overlay .study-gate-choice-button:focus-visible,
-#study-gate-lock-overlay .study-gate-reset-button:focus-visible {
+#study-gate-lock-overlay .study-gate-reset-button:focus-visible,
+#study-gate-lock-overlay .study-gate-keyboard-submit:focus-visible,
+#study-gate-lock-overlay .study-gate-keyboard-input:focus-visible {
   outline: 3px solid #93c5fd;
   outline-offset: 3px;
 }
@@ -142,6 +166,20 @@
   margin-top: 12px;
   background: #e5e7eb;
   color: #111827;
+}
+
+#study-gate-lock-overlay .study-gate-keyboard-submit {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+#study-gate-lock-overlay .study-gate-keyboard-submit:hover {
+  background: #1d4ed8;
+}
+
+#study-gate-lock-overlay .study-gate-keyboard-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 #study-gate-lock-overlay .study-gate-action-button {
