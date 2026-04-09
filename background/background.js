@@ -12,18 +12,12 @@ const DEBUG_LOG_PREFIX = "[lockBrowser/debug]";
 
 chrome.runtime.onInstalled.addListener(async () => {
   await LockBrowserStorage.ensureDataStore();
-  await LockBrowserLockState.setLockState({
-    isLocked: true,
-    unlockUntil: null
-  });
-  await broadcastLockState();
+  await initializeLockBehavior({ forceApply: true });
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   await LockBrowserStorage.ensureDataStore();
-  await LockBrowserLockState.syncAlarmWithState(RELOCK_ALARM_NAME, async () => {
-    await broadcastLockState();
-  });
+  await initializeLockBehavior({ forceApply: false });
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
@@ -53,6 +47,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
   await LockBrowserLockState.setLockState({
     isLocked: true,
+    isPaused: false,
+    pausedAt: null,
     unlockUntil: null
   });
   await broadcastLockState();
@@ -61,8 +57,13 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 async function handleMessage(message) {
   switch (message?.type) {
     case "GET_CURRENT_QUESTION": {
-      const question = await getCurrentQuestion();
-      return { ok: true, question };
+      const settings = await LockBrowserStorage.getSettings();
+      const question = await getCurrentQuestion(settings);
+      return {
+        ok: true,
+        question,
+        answerInputMode: settings.answerInputMode
+      };
     }
 
     case "SUBMIT_ANSWER": {
@@ -79,10 +80,7 @@ async function handleMessage(message) {
       const state = await LockBrowserLockState.unlockForDuration(
         settings.lockIntervalMs,
         async (_, unlockUntil) => {
-          await chrome.alarms.clear(RELOCK_ALARM_NAME);
-          await chrome.alarms.create(RELOCK_ALARM_NAME, {
-            when: unlockUntil
-          });
+          await scheduleRelock(unlockUntil);
           console.log(
             DEBUG_LOG_PREFIX,
             "next relock scheduled",
@@ -93,12 +91,13 @@ async function handleMessage(message) {
         }
       );
 
-      console.log(
-        LOG_PREFIX,
-        "lock released",
-        { unlockUntil: state.unlockUntil }
-      );
+      console.log(LOG_PREFIX, "lock released", { unlockUntil: state.unlockUntil });
+      return { ok: true, state };
+    }
 
+    case "TOGGLE_PAUSE": {
+      const settings = await LockBrowserStorage.getSettings();
+      const state = await togglePause(settings.lockIntervalMs);
       return { ok: true, state };
     }
 
@@ -126,10 +125,50 @@ async function handleMessage(message) {
   }
 }
 
-async function getCurrentQuestion() {
+async function initializeLockBehavior({ forceApply }) {
+  const settings = await LockBrowserStorage.getSettings();
+  const currentState = await LockBrowserLockState.getLockState();
+
+  if (settings.autoStartLockOnBrowserOpen) {
+    if (currentState.isLocked && !currentState.isPaused && !forceApply) {
+      await LockBrowserLockState.syncAlarmWithState(RELOCK_ALARM_NAME, async () => {
+        await broadcastLockState();
+      });
+      return;
+    }
+
+    await chrome.alarms.clear(RELOCK_ALARM_NAME);
+    await LockBrowserLockState.setLockState({
+      isLocked: true,
+      isPaused: false,
+      pausedAt: null,
+      unlockUntil: null
+    });
+    await broadcastLockState();
+    return;
+  }
+
+  if (
+    forceApply ||
+    currentState.isLocked ||
+    currentState.isPaused ||
+    currentState.unlockUntil !== null
+  ) {
+    await chrome.alarms.clear(RELOCK_ALARM_NAME);
+    await LockBrowserLockState.setLockState({
+      isLocked: false,
+      isPaused: false,
+      pausedAt: null,
+      unlockUntil: null
+    });
+    await broadcastLockState();
+  }
+}
+
+async function getCurrentQuestion(settings) {
   const store = await LockBrowserStorage.getDataStore();
   const quizState = store[LockBrowserStorage.STORAGE_KEYS.quizState];
-  const settings = store[LockBrowserStorage.STORAGE_KEYS.settings];
+  const excludedQuestionKeys = quizState.currentSession?.answeredQuestionKeys || [];
 
   if (quizState.currentQuestionRef) {
     const existing = LockBrowserStorage.findQuestion(
@@ -162,6 +201,7 @@ async function getCurrentQuestion() {
     settings,
     consecutiveUnseenCount: quizState.consecutiveUnseenCount,
     recentListIds: quizState.recentListIds,
+    excludedQuestionKeys,
     now: Date.now()
   });
 
@@ -173,8 +213,31 @@ async function getCurrentQuestion() {
         currentSession: null
       }
     });
+
+    // If nothing can be asked, abort the current lock so the user does not get stuck.
+    await LockBrowserLockState.setLockState({
+      isLocked: false,
+      isPaused: false,
+      pausedAt: null,
+      unlockUntil: null
+    });
+    await chrome.alarms.clear(RELOCK_ALARM_NAME);
+    await broadcastLockState();
     return null;
   }
+
+  const availableQuestionCount = LockBrowserQuestionSelector.countSelectableQuestions({
+    questionLists: store[LockBrowserStorage.STORAGE_KEYS.questionLists],
+    enabledListIds: store[LockBrowserStorage.STORAGE_KEYS.enabledListIds],
+    questions: store[LockBrowserStorage.STORAGE_KEYS.questions],
+    excludedQuestionKeys
+  });
+  const nextSession = createQuestionSession(
+    selected.question,
+    quizState.currentSession,
+    settings,
+    availableQuestionCount
+  );
 
   await LockBrowserStorage.setDataStore({
     [LockBrowserStorage.STORAGE_KEYS.quizState]: {
@@ -188,19 +251,18 @@ async function getCurrentQuestion() {
         quizState.recentQuestionHistory,
         selected.question
       ),
-      currentSession: createQuestionSession(selected.question)
+      currentSession: nextSession
     }
   });
 
-  console.log(
-    DEBUG_LOG_PREFIX,
-    "question selected",
-    {
-      listId: selected.question.listId,
-      questionId: selected.question.id,
-      progress: selected.progress
-    }
-  );
+  console.log(DEBUG_LOG_PREFIX, "question selected", {
+    listId: selected.question.listId,
+    questionId: selected.question.id,
+    progress: selected.progress,
+    sessionId: nextSession.sessionId,
+    completedQuestionCount: nextSession.completedQuestionCount,
+    requiredQuestionCount: nextSession.requiredQuestionCount
+  });
 
   return toPublicQuestion(selected.question, selected.progress);
 }
@@ -225,15 +287,14 @@ async function submitAnswer(input) {
   const now = Date.now();
   const progressKey = LockBrowserStorage.buildQuestionKey(question.listId, question.id);
   const currentProgress = LockBrowserStorage.getProgress(store, question.listId, question.id);
+  const quizState = store[LockBrowserStorage.STORAGE_KEYS.quizState];
+  const currentSession = ensureSession(quizState.currentSession, progressKey, settings);
   const isCorrect = input.answerReading === question.answerReading;
-  const currentSession = ensureSession(
-    store[LockBrowserStorage.STORAGE_KEYS.quizState].currentSession,
-    progressKey
-  );
   let nextProgress = currentProgress;
   let nextProgressByKey = {
     ...store[LockBrowserStorage.STORAGE_KEYS.progressByKey]
   };
+  let nextSession = currentSession;
 
   if (isCorrect) {
     nextProgress = LockBrowserProgress.applyCorrectProgress(
@@ -242,44 +303,60 @@ async function submitAnswer(input) {
       settings.lockIntervalMs
     );
     nextProgressByKey[progressKey] = nextProgress;
+    const answeredQuestionKeys = appendAnsweredQuestionKey(
+      currentSession.answeredQuestionKeys,
+      progressKey
+    );
+    nextSession = {
+      ...currentSession,
+      completedQuestionCount: currentSession.completedQuestionCount + 1,
+      answeredQuestionKeys,
+      hasIncorrectProgressUpdated: false,
+      isPenaltyActive: false
+    };
     console.log(DEBUG_LOG_PREFIX, "answer correct", {
       questionKey: progressKey,
-      nextProgress
-    });
-  } else if (currentProgress.isUnseen) {
-    // Unseen questions do not take an incorrect-progress penalty.
-    currentSession.isPenaltyActive = false;
-  } else if (!currentSession.hasIncorrectProgressUpdated) {
-    // Update incorrect progress only once per displayed question session.
-    nextProgress = LockBrowserProgress.applyIncorrectProgress(
-      currentProgress,
-      now,
-      getIncorrectReviewDelayMs()
-    );
-    nextProgressByKey[progressKey] = nextProgress;
-    currentSession.hasIncorrectProgressUpdated = true;
-    console.log(DEBUG_LOG_PREFIX, "first incorrect progress update applied", {
-      questionKey: progressKey,
       nextProgress,
-      incorrectReviewDelayMs: getIncorrectReviewDelayMs()
+      completedQuestionCount: nextSession.completedQuestionCount,
+      requiredQuestionCount: nextSession.requiredQuestionCount
     });
   } else {
-    console.log(DEBUG_LOG_PREFIX, "incorrect progress update skipped for current session", {
-      questionKey: progressKey,
-      sessionId: currentSession.sessionId
+    const incorrectResult = applyIncorrectAttempt({
+      store,
+      settings,
+      question,
+      currentProgress,
+      currentSession,
+      progressKey,
+      now
     });
+    nextProgress = incorrectResult.nextProgress;
+    nextProgressByKey = incorrectResult.nextProgressByKey;
+    nextSession = incorrectResult.nextSession;
   }
 
-  currentSession.isPenaltyActive = !isCorrect;
+  const sessionCompleted = isCorrect
+    ? shouldCompleteSessionAfterCorrect({
+        store,
+        settings,
+        quizState,
+        nextSession
+      })
+    : false;
 
   await LockBrowserStorage.setDataStore({
     [LockBrowserStorage.STORAGE_KEYS.progressByKey]: nextProgressByKey,
     [LockBrowserStorage.STORAGE_KEYS.quizState]: {
-      ...store[LockBrowserStorage.STORAGE_KEYS.quizState],
-      currentQuestionRef: isCorrect
-        ? null
-        : store[LockBrowserStorage.STORAGE_KEYS.quizState].currentQuestionRef,
-      currentSession: isCorrect ? null : currentSession
+      ...quizState,
+      currentQuestionRef: isCorrect ? null : quizState.currentQuestionRef,
+      currentSession: isCorrect
+        ? sessionCompleted
+          ? null
+          : {
+              ...nextSession,
+              questionKey: null
+            }
+        : nextSession
     }
   });
 
@@ -287,9 +364,15 @@ async function submitAnswer(input) {
     listId: question.listId,
     questionId: question.id,
     isCorrect,
+    shouldUnlock: isCorrect && sessionCompleted,
+    sessionCompleted,
+    completedQuestionCount: isCorrect ? nextSession.completedQuestionCount : currentSession.completedQuestionCount,
+    requiredQuestionCount: currentSession.requiredQuestionCount,
     feedback: isCorrect
-      ? "\u6b63\u89e3\u3067\u3059\u3002\u78ba\u8a8d\u5f8c\u306b\u30ed\u30c3\u30af\u3092\u89e3\u9664\u3067\u304d\u307e\u3059\u3002"
-      : "\u4e0d\u6b63\u89e3\u3067\u3059\u3002\u3082\u3046\u4e00\u5ea6\u8a66\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+      ? sessionCompleted
+        ? "正解です。確認後にロックを解除できます。"
+        : `正解です。次の問題へ進みます。 (${nextSession.completedQuestionCount}/${nextSession.requiredQuestionCount})`
+      : "不正解です。もう一度試してください。",
     correctAnswer: question.displayAnswer,
     correctReading: question.answerReading,
     progress: nextProgress,
@@ -310,7 +393,8 @@ async function registerIncorrectAnswer(input) {
   const currentProgress = LockBrowserStorage.getProgress(store, question.listId, question.id);
   const currentSession = ensureSession(
     store[LockBrowserStorage.STORAGE_KEYS.quizState].currentSession,
-    progressKey
+    progressKey,
+    settings
   );
 
   if (currentProgress.isUnseen) {
@@ -325,42 +409,25 @@ async function registerIncorrectAnswer(input) {
 
     return {
       shouldStartPenalty: false,
-      feedback: "初見問題なのでペナルティなしで再挑戦できます。"
+      feedback: "初めての問題なので、すぐに再挑戦できます。"
     };
   }
 
-  let nextProgress = currentProgress;
-  let nextProgressByKey = {
-    ...store[LockBrowserStorage.STORAGE_KEYS.progressByKey]
-  };
+  const incorrectResult = applyIncorrectAttempt({
+    store,
+    settings,
+    question,
+    currentProgress,
+    currentSession,
+    progressKey,
+    now: Date.now()
+  });
 
-  if (!currentSession.hasIncorrectProgressUpdated) {
-    // Update incorrect progress only once per displayed question session.
-    nextProgress = LockBrowserProgress.applyIncorrectProgress(
-      currentProgress,
-      Date.now(),
-      getIncorrectReviewDelayMs(settings.lockIntervalMs)
-    );
-    nextProgressByKey[progressKey] = nextProgress;
-    currentSession.hasIncorrectProgressUpdated = true;
-    console.log(DEBUG_LOG_PREFIX, "first incorrect progress update applied", {
-      questionKey: progressKey,
-      nextProgress,
-      incorrectReviewDelayMs: getIncorrectReviewDelayMs(settings.lockIntervalMs)
-    });
-  } else {
-    console.log(DEBUG_LOG_PREFIX, "incorrect progress update skipped for current session", {
-      questionKey: progressKey,
-      sessionId: currentSession.sessionId
-    });
-  }
-
-  currentSession.isPenaltyActive = true;
   await LockBrowserStorage.setDataStore({
-    [LockBrowserStorage.STORAGE_KEYS.progressByKey]: nextProgressByKey,
+    [LockBrowserStorage.STORAGE_KEYS.progressByKey]: incorrectResult.nextProgressByKey,
     [LockBrowserStorage.STORAGE_KEYS.quizState]: {
       ...store[LockBrowserStorage.STORAGE_KEYS.quizState],
-      currentSession
+      currentSession: incorrectResult.nextSession
     }
   });
 
@@ -370,28 +437,127 @@ async function registerIncorrectAnswer(input) {
   };
 }
 
-function createQuestionSession(question) {
+function applyIncorrectAttempt(input) {
+  const {
+    store,
+    settings,
+    question,
+    currentProgress,
+    currentSession,
+    progressKey,
+    now
+  } = input;
+  const incorrectReviewDelayMs = getIncorrectReviewDelayMs(settings);
+  let nextProgress = currentProgress;
+  let nextProgressByKey = {
+    ...store[LockBrowserStorage.STORAGE_KEYS.progressByKey]
+  };
+  const nextSession = {
+    ...currentSession,
+    isPenaltyActive: true
+  };
+
+  if (!currentSession.hasIncorrectProgressUpdated) {
+    // Incorrect progress updates only once per displayed question session.
+    nextProgress = LockBrowserProgress.applyIncorrectProgress(
+      currentProgress,
+      now,
+      incorrectReviewDelayMs
+    );
+    nextProgressByKey[progressKey] = nextProgress;
+    nextSession.hasIncorrectProgressUpdated = true;
+    console.log(DEBUG_LOG_PREFIX, "first incorrect progress update applied", {
+      questionKey: progressKey,
+      nextProgress,
+      incorrectReviewDelayMs
+    });
+  } else {
+    console.log(DEBUG_LOG_PREFIX, "incorrect progress update skipped for current session", {
+      questionKey: progressKey,
+      sessionId: currentSession.sessionId
+    });
+  }
+
   return {
-    sessionId: `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    questionKey: LockBrowserStorage.buildQuestionKey(question.listId, question.id),
-    hasIncorrectProgressUpdated: false,
-    isPenaltyActive: false
+    nextProgress,
+    nextProgressByKey,
+    nextSession,
+    incorrectReviewDelayMs
   };
 }
 
-function ensureSession(session, questionKey) {
+function createQuestionSession(question, previousSession, settings, availableQuestionCount) {
+  return {
+    sessionId: previousSession?.sessionId || createSessionId(),
+    questionKey: LockBrowserStorage.buildQuestionKey(question.listId, question.id),
+    hasIncorrectProgressUpdated: false,
+    isPenaltyActive: false,
+    completedQuestionCount: normalizeCompletedQuestionCount(previousSession?.completedQuestionCount),
+    answeredQuestionKeys: normalizeAnsweredQuestionKeys(previousSession?.answeredQuestionKeys),
+    requiredQuestionCount: normalizeRequiredQuestionCount(
+      previousSession?.requiredQuestionCount,
+      settings.questionsPerLock,
+      availableQuestionCount
+    )
+  };
+}
+
+function ensureSession(session, questionKey, settings) {
   if (session && session.questionKey === questionKey) {
     return {
-      ...session
+      ...session,
+      completedQuestionCount: normalizeCompletedQuestionCount(session.completedQuestionCount),
+      answeredQuestionKeys: normalizeAnsweredQuestionKeys(session.answeredQuestionKeys),
+      requiredQuestionCount: normalizeRequiredQuestionCount(
+        session.requiredQuestionCount,
+        settings.questionsPerLock
+      )
     };
   }
 
   return {
-    sessionId: `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    sessionId: createSessionId(),
     questionKey,
     hasIncorrectProgressUpdated: false,
-    isPenaltyActive: false
+    isPenaltyActive: false,
+    completedQuestionCount: 0,
+    answeredQuestionKeys: [],
+    requiredQuestionCount: normalizeRequiredQuestionCount(null, settings.questionsPerLock, 1)
   };
+}
+
+function normalizeCompletedQuestionCount(value) {
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function normalizeRequiredQuestionCount(value, fallback, availableQuestionCount) {
+  if (Number.isInteger(value) && value >= 1) {
+    return value;
+  }
+
+  const safeFallback = Math.max(1, fallback || 1);
+  if (!Number.isInteger(availableQuestionCount) || availableQuestionCount < 1) {
+    return safeFallback;
+  }
+
+  return Math.min(safeFallback, availableQuestionCount);
+}
+
+function normalizeAnsweredQuestionKeys(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+}
+
+function createSessionId() {
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function appendAnsweredQuestionKey(answeredQuestionKeys, questionKey) {
+  const nextKeys = normalizeAnsweredQuestionKeys(answeredQuestionKeys);
+  if (!nextKeys.includes(questionKey)) {
+    nextKeys.push(questionKey);
+  }
+
+  return nextKeys;
 }
 
 function appendRecentListId(recentListIds, listId) {
@@ -399,8 +565,40 @@ function appendRecentListId(recentListIds, listId) {
   return nextRecentListIds.slice(-4);
 }
 
-function getIncorrectReviewDelayMs(lockIntervalMs) {
-  return lockIntervalMs * 3;
+function getIncorrectReviewDelayMs(settings) {
+  return settings.incorrectRetryDelayMs;
+}
+
+function shouldCompleteSessionAfterCorrect(input) {
+  const {
+    store,
+    settings,
+    quizState,
+    nextSession
+  } = input;
+
+  if (nextSession.completedQuestionCount >= nextSession.requiredQuestionCount) {
+    return true;
+  }
+
+  const remainingSelectableCount = LockBrowserQuestionSelector.countSelectableQuestions({
+    questionLists: store[LockBrowserStorage.STORAGE_KEYS.questionLists],
+    enabledListIds: store[LockBrowserStorage.STORAGE_KEYS.enabledListIds],
+    questions: store[LockBrowserStorage.STORAGE_KEYS.questions],
+    excludedQuestionKeys: nextSession.answeredQuestionKeys
+  });
+
+  if (remainingSelectableCount > 0) {
+    return false;
+  }
+
+  console.log(DEBUG_LOG_PREFIX, "session completed early because no more questions are available", {
+    sessionId: nextSession.sessionId,
+    completedQuestionCount: nextSession.completedQuestionCount,
+    requiredQuestionCount: nextSession.requiredQuestionCount
+  });
+
+  return nextSession.completedQuestionCount > 0;
 }
 
 function appendRecentQuestionHistory(recentQuestionHistory, question) {
@@ -530,6 +728,13 @@ function toPublicQuestion(question, progress) {
   };
 }
 
+async function scheduleRelock(unlockUntil) {
+  await chrome.alarms.clear(RELOCK_ALARM_NAME);
+  await chrome.alarms.create(RELOCK_ALARM_NAME, {
+    when: unlockUntil
+  });
+}
+
 async function broadcastLockState() {
   const state = await LockBrowserLockState.getLockState();
   const tabs = await chrome.tabs.query({});
@@ -554,4 +759,33 @@ async function sendLockStateToTab(tabId, state) {
   } catch (error) {
     // Ignore pages where the content script cannot be injected.
   }
+}
+
+async function togglePause(lockIntervalMs) {
+  const currentState = await LockBrowserLockState.getLockState();
+
+  if (currentState.isPaused) {
+    const resumedState = {
+      ...LockBrowserLockState.DEFAULT_LOCK_STATE,
+      isLocked: true
+    };
+
+    await chrome.alarms.clear(RELOCK_ALARM_NAME);
+    await LockBrowserLockState.setLockState(resumedState);
+    await broadcastLockState();
+    return resumedState;
+  }
+
+  const pausedState = {
+    ...LockBrowserLockState.DEFAULT_LOCK_STATE,
+    isLocked: false,
+    isPaused: true,
+    pausedAt: Date.now(),
+    unlockUntil: null
+  };
+
+  await chrome.alarms.clear(RELOCK_ALARM_NAME);
+  await LockBrowserLockState.setLockState(pausedState);
+  await broadcastLockState();
+  return pausedState;
 }

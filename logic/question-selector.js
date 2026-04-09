@@ -10,10 +10,12 @@
       settings,
       consecutiveUnseenCount,
       recentListIds,
+      excludedQuestionKeys,
       now
     } = input;
 
     const enabledSet = new Set(enabledListIds);
+    const excludedSet = new Set(Array.isArray(excludedQuestionKeys) ? excludedQuestionKeys : []);
     const listById = new Map(questionLists.map((list) => [list.id, list]));
     const due = [];
     const upcoming = [];
@@ -27,6 +29,9 @@
       }
 
       const progressKey = globalThis.LockBrowserStorage.buildQuestionKey(question.listId, question.id);
+      if (excludedSet.has(progressKey)) {
+        continue;
+      }
       const progress = globalThis.LockBrowserProgress.ensureProgress(progressByKey[progressKey]);
       const candidate = {
         question,
@@ -88,6 +93,28 @@
     };
   }
 
+  function countSelectableQuestions(input) {
+    const {
+      questionLists,
+      enabledListIds,
+      questions,
+      excludedQuestionKeys
+    } = input;
+    const enabledSet = new Set(enabledListIds);
+    const excludedSet = new Set(Array.isArray(excludedQuestionKeys) ? excludedQuestionKeys : []);
+    const listById = new Map(questionLists.map((list) => [list.id, list]));
+
+    return questions.filter((question) => {
+      const list = listById.get(question.listId);
+      if (!list || !enabledSet.has(list.id) || list.enabled === false) {
+        return false;
+      }
+
+      const progressKey = globalThis.LockBrowserStorage.buildQuestionKey(question.listId, question.id);
+      return !excludedSet.has(progressKey);
+    }).length;
+  }
+
   function compareByReviewAtAsc(left, right) {
     const leftReviewAt = typeof left.progress.reviewAt === "number"
       ? left.progress.reviewAt
@@ -133,7 +160,8 @@
   }
 
   globalThis.LockBrowserQuestionSelector = {
-    selectNextQuestion
+    selectNextQuestion,
+    countSelectableQuestions
   };
 
   // TODO: Make listId balancing more sophisticated with weighted history and per-rank caps.
